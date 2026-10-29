@@ -1,0 +1,22 @@
+{
+  "name": "zalo-cskh",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file=.env src/server.ts",
+    "dev": "node --watch --env-file=.env src/server.ts",
+    "test": "node --test",
+    "check": "tsc"
+  },
+  "dependencies": {
+    "@google/genai": "^2.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^7.0.2"
+  }
+}

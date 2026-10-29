@@ -1,0 +1,4 @@
+# Đổi tên file thành CODEOWNERS và điền tài khoản GitHub để tự động mời review.
+*                 @fuzichoco
+/src/zalo.ts      @fuzichoco
+/data/            @fuzichoco

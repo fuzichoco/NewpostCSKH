@@ -1,0 +1,18 @@
+# Thư viện cài bằng npm
+node_modules/
+
+# Bí mật: key AI, khóa Zalo, mật khẩu quản trị – mỗi máy tự tạo từ .env.example
+.env
+
+# Dữ liệu chạy thật: hội thoại, SĐT khách, token Zalo, ảnh tải lên
+data/*.db
+data/*.db-*
+data/images/
+
+# Ghi chú cá nhân / công cụ trên máy
+CLAUDE.md
+.impeccable/
+BAN_GHI_DNS_*.txt
+
+# Kho kiến thức thật của công ty (bảng giá nội bộ) – repo dùng data/knowledge.example.md
+data/knowledge.md
