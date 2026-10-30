@@ -5,6 +5,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import * as ai from "./ai.ts"
 import * as bot from "./bot.ts"
 import * as db from "./db.ts"
+import { deleteKnowledgeFile, fileToText, listKnowledgeFiles, saveKnowledgeFile } from "./import.ts"
+import { deletePriceService, listPriceServices, parsePriceWorkbook, savePriceService } from "./price.ts"
 import * as views from "./views.ts"
 import * as zalo from "./zalo.ts"
 import * as zns from "./zns.ts"
@@ -181,6 +183,39 @@ async function uploadImage(req: IncomingMessage, res: ServerResponse) {
   imagesBack(res, `Đã tải ảnh "${label}". Bot sẽ gửi ảnh này khi gặp đúng tình huống đã mô tả.`)
 }
 
+const settingsBack = (res: ServerResponse, msg: string) => redirect(res, `/admin/settings?msg=${encodeURIComponent(msg)}`)
+
+/** Nạp một hay nhiều file: Excel bảng giá dạng chuẩn thành bảng tính giá (thay bảng cũ cùng hãng),
+ *  file khác thành kiến thức chữ (nạp lại cùng tên thì thay bản cũ). */
+async function uploadKnowledge(req: IncomingMessage, res: ServerResponse) {
+  const body = await readRaw(req, 30 * MB)
+  const form = await new Response(new Uint8Array(body), { headers: { "Content-Type": String(req.headers["content-type"]) } }).formData()
+  const files = form.getAll("file").filter((f): f is File => f instanceof File && f.size > 0)
+  if (!files.length) return settingsBack(res, "Chưa chọn file.")
+  const msgs: string[] = []
+  for (const file of files) {
+    try {
+      const buf = Buffer.from(await file.arrayBuffer())
+      const prices = /\.xlsx$/i.test(file.name) ? parsePriceWorkbook(file.name, buf) : null
+      if (prices) {
+        const replaced = savePriceService(prices)
+        msgs.push(`${replaced ? "Đã thay" : "Đã nạp"} bảng giá ${prices.name} (${prices.goods.zones.length} vùng).`)
+        continue
+      }
+      const text = fileToText(file.name, buf).trim()
+      if (!text) {
+        msgs.push(`File "${file.name}" không có chữ nào.`)
+        continue
+      }
+      const { name, replaced } = saveKnowledgeFile(file.name, text)
+      msgs.push(replaced ? `Đã thay file "${name}" bằng bản mới.` : `Đã nạp file "${name}".`)
+    } catch (e) {
+      msgs.push(`${file.name}: ${(e as Error).message}`)
+    }
+  }
+  settingsBack(res, `${msgs.join(" ")} Bot dùng nội dung mới từ tin nhắn tiếp theo.`)
+}
+
 /** "YYYY-MM-DD" theo giờ Việt Nam → [0h ngày đó, 0h ngày sau). Sai hoặc trống thì lấy hôm nay. */
 function dayRange(date: string | null) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date())
@@ -204,6 +239,7 @@ async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) 
   if (req.method === "POST") {
     if (!sameOrigin(req)) return send(res, 403, views.errorPage("Sai nguồn gửi form"))
     if (url.pathname === "/admin/images") return await uploadImage(req, res)
+    if (url.pathname === "/admin/knowledge/upload") return await uploadKnowledge(req, res)
     form = new URLSearchParams(await readBody(req))
   }
   const route = `${req.method} ${url.pathname}`
@@ -310,16 +346,36 @@ async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) 
       if (form.get("reset")) db.clearUser(TEST_USER)
       else if (form.get("text")?.trim()) {
         db.addMessage(TEST_USER, "user", form.get("text")!.trim())
-        await bot.answer(TEST_USER)
+        let err = ""
+        try {
+          await bot.answer(TEST_USER)
+        } catch (e) {
+          err = e instanceof Error ? e.message : "Bot trả lời lỗi"
+        }
+        // Trang gửi bằng JavaScript: trả JSON, trang tự lấy tin mới, không tải lại.
+        if (req.headers["x-requested-with"] === "fetch") {
+          return send(res, err ? 502 : 200, JSON.stringify({ ok: !err, error: err }), "application/json; charset=utf-8")
+        }
       }
       return redirect(res, "/admin/test#latest")
     case "GET /admin/settings":
       return send(res, 200, views.settings(
         await readFile("data/prompt.md", "utf8"),
-        ai.readKnowledge(),
+        ai.readMainKnowledge(),
         url.searchParams.has("saved"),
         db.getKv("follow_up_text") ?? bot.FOLLOW_UP_DEFAULT,
+        url.searchParams.get("msg") ?? "",
+        listKnowledgeFiles(),
+        listPriceServices(),
       ))
+    case "POST /admin/price/delete": {
+      const code = form.get("code") ?? ""
+      return settingsBack(res, deletePriceService(code) ? `Đã xóa bảng giá ${code}. Bot không báo giá dịch vụ này nữa.` : "Không tìm thấy bảng giá cần xóa.")
+    }
+    case "POST /admin/knowledge/delete": {
+      const name = form.get("name") ?? ""
+      return settingsBack(res, deleteKnowledgeFile(name) ? `Đã xóa file "${name}". Bot không dùng kiến thức trong file này nữa.` : "Không tìm thấy file cần xóa.")
+    }
     case "POST /admin/settings":
       await writeFile("data/prompt.md", form.get("prompt") ?? "")
       await writeFile("data/knowledge.md", form.get("knowledge") ?? "")

@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs"
 import { GoogleGenAI } from "@google/genai"
 import { getKv, listImages } from "./db.ts"
 import type { Message } from "./db.ts"
+import { listKnowledgeFiles } from "./import.ts"
+import { listPriceServices } from "./price.ts"
 
 /** AI trả về chuỗi này khi không chắc / cần người thật. */
 export const HANDOVER_TAG = "[CHUYEN_NHAN_VIEN]"
@@ -14,11 +16,14 @@ export const PHONE_TAG = "[XIN_SDT]"
 const RULES = `
 # QUY TẮC BẮT BUỘC
 - Chỉ trả lời dựa trên KHO KIẾN THỨC bên dưới. Không bịa giá, thời gian, chính sách.
-- Khách hỏi giá: nếu nước đến có trong danh sách Zone thì BẠN PHẢI tự tính và báo giá theo bảng, KHÔNG chuyển nhân viên.
+- Khách hỏi giá: làm theo mục "BÁO GIÁ CƯỚC QUỐC TẾ" (hệ thống tính giá), KHÔNG chuyển nhân viên.
   Thiếu thông tin (nước đến, tài liệu hay hàng hóa, cân nặng, kích thước) thì hỏi thêm, KHÔNG chuyển nhân viên.
+- Khách hỏi gửi một mặt hàng: tra mục hàng cấm và hạn chế. Mức KHÔNG NHẬN thì tự từ chối lịch sự, KHÔNG chuyển nhân viên.
+  Mức CÓ ĐIỀU KIỆN thì trước hết xin tên hàng cụ thể, thành phần, số lượng, nước đến và số điện thoại; khách trả lời đủ rồi mới chuyển nhân viên.
 - CHỈ chuyển nhân viên khi: khách khiếu nại / bức xúc; hỏi bồi thường; cần tra cứu một đơn hàng cụ thể;
-  nước đến không có trong danh sách Zone; hàng thuộc mục "HÀNG CẦN KIỂM TRA TRƯỚC KHI NHẬN"; hoặc câu hỏi
-  hoàn toàn không có trong kho kiến thức. Khi đó trả lời ĐÚNG MỘT DÒNG "${HANDOVER_TAG}" và không viết gì khác.
+  kết quả tính giá báo không dịch vụ nào có giá hoặc quá mức cân; hàng mức CÓ ĐIỀU KIỆN (đã xin đủ thông tin như trên); khách cần ước tính
+  số tiền thuế hoặc hàng đang bị giữ ở hải quan; hoặc câu hỏi hoàn toàn không có trong kho kiến thức.
+  Khi đó trả lời ĐÚNG MỘT DÒNG "${HANDOVER_TAG}" và không viết gì khác.
 - Tin "(Nhân viên)" trong lịch sử là do nhân viên thật đã trả lời khách. Bạn đang được giao trả lời tiếp,
   hãy hỗ trợ bình thường; có tin nhân viên trước đó KHÔNG phải lý do để chuyển nhân viên.
 - Khách đồng ý gửi hàng / chốt giá: xin đủ nước đến, loại hàng, cân nặng, SỐ ĐIỆN THOẠI liên hệ và địa chỉ lấy hàng
@@ -38,6 +43,20 @@ Mỗi ảnh có tên và tình huống nên gửi. Khi tình huống của khác
 vào cuối câu trả lời (mỗi ảnh một dòng). Chỉ gửi ảnh thật sự liên quan; ảnh đã gửi trong hội thoại
 (tin "[Gửi hình ảnh] #số") thì không gửi lại trừ khi khách xin lại. Vẫn trả lời bằng chữ như bình thường.
 ${images.map((i) => `- [GUI_ANH:${i.id}] ${i.name}${i.usage ? ` — gửi khi: ${i.usage}` : ""}`).join("\n")}`
+}
+
+/** Dịch vụ có bảng giá: AI chỉ thu thông tin và viết thẻ, code tra giá (AI tự đọc bảng hay tra nhầm dòng, nhầm vùng). */
+function priceRules() {
+  const services = listPriceServices()
+  if (!services.length) return ""
+  return `\n# BÁO GIÁ CƯỚC QUỐC TẾ
+Hệ thống có bảng giá: ${services.map((s) => s.name).join("; ")}. Bạn KHÔNG tự tra hay tự tính giá.
+Khách hỏi giá: cần nước đến, tài liệu hay hàng hóa, cân nặng thực tế từng kiện, kích thước Dài × Rộng × Cao (cm) từng kiện.
+Thiếu thì hỏi thêm. Tài liệu (giấy tờ) thì KHÔNG hỏi kích thước; khách không biết kích thước thì thôi; hai trường hợp này dùng "-".
+Đủ rồi thì trả lời CHỈ các dòng thẻ, mỗi kiện một dòng:
+[TINH_GIA: mã nước ISO 2 chữ | cân nặng kg | DàixRộngxCao hoặc - | hang hoặc tai_lieu]
+Ví dụ: [TINH_GIA: JP | 3 | 40x30x30 | hang]. Nam Trung Quốc (Quảng Châu, Thâm Quyến, Đông Quan, Phúc Kiến, Phúc Châu…) dùng mã CN1.
+Hệ thống sẽ tính và đưa lại "KẾT QUẢ TÍNH GIÁ" để bạn viết câu báo giá cho khách.`
 }
 
 export type Provider = "gemini" | "openai" | "anthropic"
@@ -63,15 +82,24 @@ export function currentConfig(): AiConfig {
 
 type Turn = { role: "user" | "model"; text: string }
 
-/** Kho kiến thức thật của công ty không đưa lên Git; máy mới clone về thì dùng file mẫu. */
+/** Kho kiến thức chính (ô soạn trong trang admin). Không đưa lên Git; máy mới clone, chưa nạp file nào thì dùng file mẫu. */
+export function readMainKnowledge() {
+  if (existsSync("data/knowledge.md")) return readFileSync("data/knowledge.md", "utf8")
+  return listKnowledgeFiles().length ? "" : readFileSync("data/knowledge.example.md", "utf8")
+}
+
+/** Toàn bộ kiến thức AI dùng: kho chính rồi từng file đã nạp (thứ tự cố định để cache trúng). */
 export const readKnowledge = () =>
-  readFileSync(existsSync("data/knowledge.md") ? "data/knowledge.md" : "data/knowledge.example.md", "utf8")
+  [readMainKnowledge().trim(), ...listKnowledgeFiles().map((f) => `## ${f.name}\n${f.text.trim()}`)].filter(Boolean).join("\n\n")
 
 /** extra: hướng dẫn thêm cho riêng lần gọi này (thông tin khách, tình huống đặc biệt). */
 export async function generateReply(history: Message[], cfg = currentConfig(), extra = ""): Promise<string> {
   if (!cfg.key) throw new Error(`Chưa nhập API key cho ${PROVIDERS[cfg.provider].label}`)
   // Đọc file mỗi lần để sửa trong trang admin là có hiệu lực ngay.
-  const system = `${readFileSync("data/prompt.md", "utf8")}\n${RULES}${imageRules()}${extra}\n\n# KHO KIẾN THỨC\n${readKnowledge()}`
+  // Phần cố định (giọng văn, quy tắc, ảnh, kho kiến thức) đứng trước, phần riêng từng khách (extra) đứng cuối:
+  // AI lưu cache phần đầu giống nhau giữa các lần gọi → kho kiến thức tính rẻ hơn nhiều và trả lời nhanh hơn.
+  const fixed = `${readFileSync("data/prompt.md", "utf8")}\n${RULES}${priceRules()}${imageRules()}\n\n# KHO KIẾN THỨC\n${readKnowledge()}`
+  const system = { fixed, extra: extra.trim() ? `\n\n# THÔNG TIN RIÊNG CHO LẦN TRẢ LỜI NÀY\n${extra.trim()}` : "" }
 
   // Các hãng đều cần lượt user/model xen kẽ, bắt đầu bằng user: gộp các tin liền nhau cùng vai.
   const turns: Turn[] = []
@@ -105,13 +133,16 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
   return data
 }
 
-const CALL: Record<Provider, (cfg: AiConfig, system: string, turns: Turn[]) => Promise<string>> = {
+type System = { fixed: string; extra: string }
+
+// Gemini và OpenAI tự cache phần đầu prompt trùng nhau; Claude cần đánh dấu cache_control.
+const CALL: Record<Provider, (cfg: AiConfig, system: System, turns: Turn[]) => Promise<string>> = {
   async gemini(cfg, system, turns) {
     const client = new GoogleGenAI({ apiKey: cfg.key, httpOptions: { timeout: TIMEOUT } })
     const res = await client.models.generateContent({
       model: cfg.model,
       contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
-      config: { systemInstruction: system, temperature: 0.3 },
+      config: { systemInstruction: system.fixed + system.extra, temperature: 0.3 },
     })
     return res.text ?? ""
   },
@@ -119,7 +150,7 @@ const CALL: Record<Provider, (cfg: AiConfig, system: string, turns: Turn[]) => P
   async openai(cfg, system, turns) {
     const data = await postJson("https://api.openai.com/v1/chat/completions", { Authorization: `Bearer ${cfg.key}` }, {
       model: cfg.model,
-      messages: [{ role: "system", content: system }, ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text }))],
+      messages: [{ role: "system", content: system.fixed + system.extra }, ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text }))],
     })
     return data.choices?.[0]?.message?.content ?? ""
   },
@@ -127,7 +158,10 @@ const CALL: Record<Provider, (cfg: AiConfig, system: string, turns: Turn[]) => P
     const data = await postJson("https://api.anthropic.com/v1/messages", { "x-api-key": cfg.key, "anthropic-version": "2023-06-01" }, {
       model: cfg.model,
       max_tokens: 1024,
-      system,
+      system: [
+        { type: "text", text: system.fixed, cache_control: { type: "ephemeral" } },
+        ...(system.extra ? [{ type: "text", text: system.extra }] : []),
+      ],
       messages: turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
     })
     return (data.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("")

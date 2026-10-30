@@ -30,7 +30,13 @@ Máy đã cài sẵn (laptop đang dùng): chỉ cần 4 bước, khoảng 3 ph�
 |---|---|
 | Hội thoại | Xem khách nhắn. Khách **chờ nhân viên** nằm trên cùng. Bấm vào khách → **Nhân viên chat** để trả lời thay bot, **Bot trả lời** để giao lại |
 | Chat thử | Hỏi thử bot như khách, không gửi qua Zalo |
-| Kiến thức & giọng văn | Sửa bảng giá, quy định, cách bot xưng hô. Lưu là có hiệu lực ngay |
+| Kiến thức & giọng văn | Nạp file (chọn được nhiều file một lúc), sửa quy định, cách bot xưng hô. Lưu là có hiệu lực ngay |
+
+**Cập nhật bảng giá:** ở mục *Kiến thức & giọng văn* → *Nạp file*, chọn file Excel giá công bố của hãng (mẫu `CHUAN_MB_<HÃNG>_….xlsx`) → *Nạp file*.
+Hệ thống tự nhận ra hãng và thay bảng giá cũ của hãng đó; bot báo giá mới ngay. Giá do hệ thống tự tính
+(cân tính cước = số lớn hơn giữa cân thực và D×R×C/5000, làm tròn lên 0,5 kg; vượt mốc giá trọn gói thì số kg × đơn giá/kg),
+bot chỉ hỏi khách nước đến, cân nặng, kích thước, loại hàng rồi viết câu báo giá. File Excel phải giữ đúng mẫu cũ; sai mẫu thì trang báo lỗi.
+File khác (.md, Word, .txt…) thành kiến thức cho bot; nạp lại cùng tên là thay bản cũ, bấm *Xóa* khi không cần nữa.
 | Model AI | Đổi hãng AI (Gemini / ChatGPT / Claude) và API key. Hệ thống thử trước, key sai thì không đổi |
 
 Bot tự chuyển cho nhân viên khi: khách đòi gặp người thật, khiếu nại, hỏi giá nước chưa có trong bảng, hoặc nhân viên đã trả lời trong app Zalo OA.

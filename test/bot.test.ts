@@ -198,3 +198,66 @@ test("khởi động lại: chỉ khách có tin cuối chưa được trả l�
   assert.ok(pending.includes("u4")) // tin cuối là của khách
   assert.ok(!pending.includes("u3")) // tin cuối là của nhân viên
 })
+
+test("AI viết thẻ [TINH_GIA]: hệ thống tính rồi hỏi AI lần nữa kèm kết quả, thẻ không tới khách", async () => {
+  db.setKv("ai_provider", "openai")
+  db.setKv("ai_model", "test")
+  db.setKv("ai_key_openai", "test-key")
+  const real = globalThis.fetch
+  const systems: string[] = []
+  const replies = ["[TINH_GIA: JP | 3 | 40x30x30 | hang]", "Dạ giá đi Nhật ạ [TINH_GIA: JP | 3 | - | hang]"]
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    systems.push(JSON.parse(String(init.body)).messages[0].content)
+    return Response.json({ choices: [{ message: { content: replies.shift() ?? "" } }] })
+  }) as typeof fetch
+  try {
+    db.addMessage("g1", "user", "3kg đi Nhật thùng 40x30x30 bao nhiêu")
+    assert.deepEqual(textOf(await answer("g1")), ["Dạ giá đi Nhật ạ"])
+    assert.equal(systems.length, 2)
+    assert.ok(!systems[0].includes("KẾT QUẢ TÍNH GIÁ"))
+    assert.match(systems[1], /KẾT QUẢ TÍNH GIÁ[\s\S]*mã nước JP, hàng hóa, cân thực 3 kg, kích thước 40x30x30, trọng lượng tính cước 7,5 kg/)
+  } finally {
+    globalThis.fetch = real
+    db.setKv("ai_provider", "gemini")
+  }
+})
+
+test("tính giá xong mà bước viết câu trả lời lỗi: thử lại chỉ bước đó, không bắt AI viết thẻ lại", async () => {
+  db.setKv("ai_provider", "openai")
+  db.setKv("ai_model", "test")
+  db.setKv("ai_key_openai", "test-key")
+  const real = globalThis.fetch
+  const systems: string[] = []
+  const replies = ["[TINH_GIA: JP | 3 | - | hang]", "", "Dạ giá đây ạ"]
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    systems.push(JSON.parse(String(init.body)).messages[0].content)
+    return Response.json({ choices: [{ message: { content: replies.shift() ?? "" } }] })
+  }) as typeof fetch
+  try {
+    db.addMessage("g2", "user", "3kg đi Nhật")
+    assert.deepEqual(textOf(await answer("g2")), ["Dạ giá đây ạ"])
+    assert.deepEqual(systems.map((s) => s.includes("KẾT QUẢ TÍNH GIÁ")), [false, true, true])
+  } finally {
+    globalThis.fetch = real
+    db.setKv("ai_provider", "gemini")
+  }
+})
+
+test("khách nhắn thêm trong lúc AI đang soạn: bỏ câu đã soạn, không gửi câu trả lời cũ", async () => {
+  db.setKv("ai_provider", "openai")
+  db.setKv("ai_model", "test")
+  db.setKv("ai_key_openai", "test-key")
+  const real = globalThis.fetch
+  globalThis.fetch = (async () => {
+    db.addMessage("d1", "user", "5kg nha")
+    return Response.json({ choices: [{ message: { content: "Dạ anh gửi đi Nhật bao nhiêu kg ạ?" } }] })
+  }) as typeof fetch
+  try {
+    db.addMessage("d1", "user", "gửi đi Nhật")
+    assert.equal(await answer("d1"), null)
+    assert.deepEqual(db.history("d1", 10).map((m) => m.role), ["user", "user"])
+  } finally {
+    globalThis.fetch = real
+    db.setKv("ai_provider", "gemini")
+  }
+})

@@ -13,7 +13,7 @@ Nhân viên ── trang /admin ──────────────┘   
 | File | Vai trò |
 |---|---|
 | `src/server.ts` | Máy chủ HTTP: `/webhook/zalo`, `/login`, `/admin/*`, ảnh công khai, chống CSRF, đăng nhập |
-| `src/bot.ts` | Nghiệp vụ: gộp tin 3 giây, gọi AI (hỏi lại tối đa 3 lần), chuyển nhân viên, bot nhận lại sau 10 phút, hỏi thăm 2 giờ, gửi ảnh, nút chia sẻ SĐT, chốt đơn |
+| `src/bot.ts` | Nghiệp vụ: gộp tin 15 giây, gọi AI (hỏi lại tối đa 3 lần), chuyển nhân viên, bot nhận lại sau 10 phút, hỏi thăm 2 giờ, gửi ảnh, nút chia sẻ SĐT, chốt đơn |
 | `src/ai.ts` | Ghép prompt (`data/prompt.md` + quy tắc + kho kiến thức + 20 tin gần nhất), gọi 3 hãng AI, định nghĩa các thẻ `[CHUYEN_NHAN_VIEN]`, `[GUI_ANH:id]`, `[DON_HANG]`, `[XIN_SDT]` |
 | `src/zalo.ts` | API Zalo: chữ ký webhook, OAuth v4, làm mới token, gửi chữ / ảnh / yêu cầu thông tin, lấy tên + SĐT đã chia sẻ |
 | `src/db.ts` | SQLite (`node:sqlite`): bảng, truy vấn, tự thêm cột khi nâng cấp |

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises"
 import { extname } from "node:path"
 import { generateReply, HANDOVER_TAG, IMAGE_TAG, ORDER_TAG, PHONE_TAG } from "./ai.ts"
 import * as db from "./db.ts"
+import { PRICE_TAG, priceResult } from "./price.ts"
 import * as zalo from "./zalo.ts"
 import { normalizePhone } from "./zns.ts"
 
@@ -35,9 +36,17 @@ const RETRY_MS = Number(process.env.AI_RETRY_MS ?? 2000)
 /** Model rẻ (flash-lite) đôi khi chọn chuyển nhân viên ngẫu nhiên, Gemini miễn phí hay báo quá tải:
  *  hỏi lại tối đa 3 lần, chỉ chuyển nhân viên khi cả 3 lần đều chuyển hoặc đều lỗi. */
 async function aiReply(hist: db.Message[], extra = ""): Promise<string> {
+  // AI xin tính giá (thẻ TINH_GIA): code tra bảng giá rồi hỏi AI lần nữa kèm kết quả để viết câu báo giá.
+  // Đã có kết quả thì lần thử lại chỉ gọi bước viết câu trả lời, đỡ tốn lượt gọi AI (gói miễn phí giới hạn lượt/phút).
+  let priced = ""
   for (let i = 1; i <= AI_TRIES; i++) {
     try {
-      const reply = await generateReply(hist, undefined, extra)
+      let reply = await generateReply(hist, undefined, extra + priced)
+      if (!priced && reply.match(PRICE_TAG)) {
+        priced = priceResult(reply)
+        reply = await generateReply(hist, undefined, extra + priced)
+      }
+      reply = reply.replace(PRICE_TAG, "").trim()
       if (reply && !reply.includes(HANDOVER_TAG)) return reply
     } catch (err) {
       console.error(`Gọi AI lỗi (lần ${i}/${AI_TRIES}):`, err instanceof Error ? err.message : err)
@@ -71,6 +80,8 @@ export async function answer(userId: string): Promise<Outgoing[] | null> {
 
   if (pending.some(wantsHuman)) return [handover(userId)]
   const reply = await aiReply(hist, customerInfo(userId))
+  // Khách nhắn thêm trong lúc AI đang soạn: bỏ câu đã soạn, lượt chờ của tin mới sẽ đọc lại tất cả rồi trả lời một lần.
+  if (db.history(userId, 1)[0]?.id !== hist.at(-1)?.id) return null
   if (reply.includes(HANDOVER_TAG)) return [handover(userId)]
   return finish(userId, reply)
 }
@@ -174,8 +185,8 @@ async function deliver(userId: string, out: Outgoing[]) {
   }
 }
 
-// Chờ khách nhắn xong (khách hay gửi nhiều tin liền) rồi trả lời 1 lần.
-const DEBOUNCE_MS = 3000
+// Chờ khách nhắn xong (khách hay gửi nhiều tin liền, gõ điện thoại chậm) rồi đọc hết các tin và trả lời 1 lần.
+const DEBOUNCE_MS = 15_000
 const timers = new Map<string, NodeJS.Timeout>()
 const busy = new Set<string>()
 

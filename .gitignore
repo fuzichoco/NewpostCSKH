@@ -16,3 +16,5 @@ BAN_GHI_DNS_*.txt
 
 # Kho kiến thức thật của công ty (bảng giá nội bộ) – repo dùng data/knowledge.example.md
 data/knowledge.md
+data/knowledge-files/
+data/bang-gia/

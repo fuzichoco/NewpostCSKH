@@ -1,6 +1,8 @@
 import type { DayCustomer, Image, Message, Order, User, UserRow, ZnsJob, ZnsStatus } from "./db.ts"
 import { ENABLED as ZNS_ENABLED, TAG_LABEL, type Template } from "./zns.ts"
 import { PROVIDERS, type AiConfig, type Provider } from "./ai.ts"
+import { KNOWLEDGE_EXT, type KnowledgeFile } from "./import.ts"
+import type { PriceService } from "./price.ts"
 
 export const esc = (s: unknown) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!)
@@ -122,6 +124,14 @@ textarea:focus{border-color:var(--focus)}
 .editor textarea{font-family:ui-monospace,Consolas,monospace;font-size:13.5px;line-height:1.6;min-height:62vh}
 .actions{position:sticky;bottom:0;padding:14px 0;background:var(--paper);display:flex;gap:14px;align-items:center}
 .saved{color:var(--ok);font-weight:600}
+.kfiles{list-style:none;padding:0;margin:0;display:grid;gap:8px}
+.kfiles li{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+.kfiles details{flex:1;min-width:0}
+.kfiles summary{cursor:pointer;overflow-wrap:anywhere}
+.picked{list-style:none;padding:0;margin:0;display:grid;gap:6px}
+.picked:empty{display:none}
+.picked li{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:8px;padding:4px 4px 4px 12px;overflow-wrap:anywhere}
+.kfiles pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;font-size:13px;margin:8px 0 0}
 .follow{margin-top:20px;max-width:760px}
 .follow label{font-weight:600;display:block}
 .follow p{margin:2px 0 8px;color:var(--muted);font-size:14px}
@@ -209,10 +219,11 @@ export const messagesHtml = (msgs: Message[]) =>
     .join("")
 const thread = (msgs: Message[]) => `<div class="thread" data-last="${msgs.at(-1)?.id ?? 0}">${messagesHtml(msgs)}</div>`
 
-/** Trang hội thoại: gửi tin không tải lại trang, tự hiện tin mới mỗi 3 giây, Enter để gửi.
+/** Trang hội thoại và Chat thử: gửi tin không tải lại trang, tự hiện tin mới mỗi 3 giây, Enter để gửi.
+ *  Chat thử (as = "user"): tin khách hiện ngay kèm dòng "Đang soạn trả lời…" trong lúc chờ AI.
  *  Không có JavaScript thì form vẫn gửi và tải lại trang như cũ. */
-const LIVE_CHAT = (id: string) => `<script>(() => {
-const uid = ${JSON.stringify(id)}, th = document.querySelector(".thread"), f = document.querySelector("form.composer")
+const LIVE_CHAT = (id: string, as: "staff" | "user" = "staff") => `<script>(() => {
+const uid = ${JSON.stringify(id)}, as = ${JSON.stringify(as)}, th = document.querySelector(".thread"), f = document.querySelector("form.composer")
 let last = +th.dataset.last || 0, sending = false
 const atBottom = () => innerHeight + scrollY >= document.documentElement.scrollHeight - 160
 const toBottom = () => scrollTo(0, document.documentElement.scrollHeight)
@@ -236,18 +247,26 @@ const ta = f.querySelector("textarea"), btn = f.querySelector("button")
 ta.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); f.requestSubmit() }
 })
+const bubble = (role, meta, text) => {
+  const el = document.createElement("div")
+  el.className = "msg " + role + " pending"
+  el.innerHTML = '<span class="meta"></span>'
+  el.firstChild.textContent = meta
+  el.append(text)
+  th.append(el)
+  return el
+}
 f.onsubmit = async (e) => {
+  if (e.submitter?.name === "reset") return // nút Bắt đầu lại của Chat thử: gửi form bình thường
   e.preventDefault()
   const text = ta.value.trim()
   if (!text || sending) return
   sending = true
   btn.disabled = true
   ta.value = ""
-  const tmp = document.createElement("div")
-  tmp.className = "msg staff pending"
-  tmp.innerHTML = '<span class="meta">Nhân viên, đang gửi…</span>'
-  tmp.append(text)
-  th.append(tmp)
+  document.querySelector("p.empty")?.remove()
+  const tmp = bubble(as, as === "user" ? "Khách, đang gửi…" : "Nhân viên, đang gửi…", text)
+  const typing = as === "user" ? bubble("bot", "Bot", "Đang soạn trả lời…") : null
   toBottom()
   try {
     const r = await fetch(f.action, {
@@ -260,7 +279,10 @@ f.onsubmit = async (e) => {
     sending = false
     await poll() // lấy tin thật vừa lưu rồi mới bỏ tin tạm, không bị nháy
     tmp.remove()
+    typing?.remove()
+    toBottom()
   } catch (err) {
+    typing?.remove()
     tmp.classList.replace("pending", "failed")
     tmp.querySelector(".meta").textContent = "Chưa gửi được: " + err.message
     ta.value = text
@@ -339,24 +361,75 @@ export function testChat(msgs: Message[], paused: boolean) {
     "test",
     `<h1>Chat thử</h1>
 <p class="muted">Nhắn như một khách hàng để xem bot trả lời. Tin ở đây không gửi qua Zalo.</p>
-${msgs.length ? thread(msgs) : '<p class="empty">Gõ câu hỏi đầu tiên bên dưới, ví dụ: Gửi 2kg từ Hà Nội vào TP.HCM hết bao nhiêu?</p>'}
+${msgs.length ? "" : '<p class="empty">Gõ câu hỏi đầu tiên bên dưới, ví dụ: Gửi 3kg quần áo đi Nhật, thùng 40x30x20, hết bao nhiêu?</p>'}
+${thread(msgs)}
 ${paused ? '<p class="banner">Bot đã chuyển hội thoại thử này cho nhân viên nên sẽ không trả lời nữa. Bấm Bắt đầu lại để thử tiếp.</p>' : ""}
 <form class="composer" method="post" action="/admin/test">
-<textarea name="text" rows="2" required autofocus aria-label="Tin nhắn thử" placeholder="Nhập tin như khách hàng"></textarea>
+<textarea name="text" rows="2" required autofocus aria-label="Tin nhắn thử" placeholder="Nhập tin như khách hàng (Enter để gửi)"></textarea>
 <div class="row-actions"><button class="btn">Gửi</button><button class="btn ghost" name="reset" value="1" formnovalidate>Bắt đầu lại</button></div>
-</form>`,
+</form>
+${LIVE_CHAT("test-admin", "user")}`,
   )
 }
 
-export function settings(prompt: string, knowledge: string, saved: boolean, followUp: string) {
+const tokens = (text: string) => `khoảng ${Math.max(1, Math.round(text.length / 3 / 1000))} nghìn token`
+const vnTime = (ms: number) =>
+  new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", dateStyle: "short", timeStyle: "short" }).format(ms)
+
+export function settings(prompt: string, knowledge: string, saved: boolean, followUp: string, flash = "", files: KnowledgeFile[] = [], prices: PriceService[] = []) {
+  const priceList = prices
+    .map((s) => `<li><div><b>${esc(s.name)}</b> <span class="muted">· ${s.goods.zones.length} vùng · ${esc(s.file)} · nạp lúc ${vnTime(s.updated)}</span></div>
+<form method="post" action="/admin/price/delete"><input type="hidden" name="code" value="${esc(s.code)}">
+<button class="btn danger" onclick="return confirm('Xóa bảng giá này? Bot sẽ không báo giá dịch vụ này nữa.')">Xóa</button></form></li>`)
+    .join("")
+  const list = files
+    .map((f) => `<li><details><summary><b>${esc(f.name)}</b> <span class="muted">· ${tokens(f.text)} · nạp lúc ${vnTime(f.updated)}</span></summary>
+<pre>${esc(f.text)}</pre></details>
+<form method="post" action="/admin/knowledge/delete"><input type="hidden" name="name" value="${esc(f.name)}">
+<button class="btn danger" onclick="return confirm('Xóa file này? Bot sẽ không dùng kiến thức trong file này nữa.')">Xóa</button></form></li>`)
+    .join("")
   return layout(
     "Kiến thức & giọng văn",
     "settings",
     `<h1>Kiến thức & giọng văn</h1>
+${flash ? `<p class="banner" role="status">${esc(flash)}</p>` : ""}
+<section class="group panel"><h2>Nạp kho kiến thức từ file</h2>
+<form class="stack" method="post" action="/admin/knowledge/upload" enctype="multipart/form-data" onsubmit="this.querySelector('button').disabled=true">
+<label for="kfile">File (chọn được nhiều file một lúc)</label><input id="kfile" name="file" type="file" accept="${KNOWLEDGE_EXT.join(",")}" multiple required>
+<ul id="kpicked" class="picked" aria-live="polite"></ul>
+<script>(() => {
+  // Liệt kê file đã chọn, mỗi file một nút Bỏ để gỡ file chọn nhầm trước khi nạp.
+  const input = document.getElementById("kfile"), list = document.getElementById("kpicked")
+  const show = () => {
+    list.replaceChildren(...[...input.files].map((f, i) => {
+      const li = document.createElement("li"), b = document.createElement("button")
+      li.textContent = f.name + " "
+      b.type = "button"; b.className = "btn ghost"; b.textContent = "Bỏ"; b.setAttribute("aria-label", "Bỏ file " + f.name)
+      b.onclick = () => {
+        const dt = new DataTransfer()
+        ;[...input.files].forEach((x, j) => j !== i && dt.items.add(x))
+        input.files = dt.files
+        show()
+      }
+      li.append(b)
+      return li
+    }))
+  }
+  input.addEventListener("change", show)
+})()</script>
+<p class="hint">File Excel bảng giá của hãng (mẫu CHUAN_MB_…) tự thành bảng tính giá, nạp lại thì thay giá cũ của hãng đó.
+File khác (.md nên dùng, .txt, .csv mã UTF-8, Word .docx, Excel .xlsx) thành kiến thức cho bot; nạp lại cùng tên là thay bản cũ. File PDF: mở bằng Word rồi lưu .docx.</p>
+<div><button class="btn">Nạp file</button></div></form>
+<h3>Bảng giá đã nạp <span class="muted">(${prices.length})</span></h3>
+<p class="hint">Bot không tự đọc bảng giá: hệ thống tự tính cước theo các bảng này rồi bot báo cho khách.</p>
+${priceList ? `<ul class="kfiles">${priceList}</ul>` : '<p class="empty">Chưa nạp bảng giá nào.</p>'}
+<h3>File kiến thức đã nạp <span class="muted">(${files.length})</span></h3>
+${list ? `<ul class="kfiles">${list}</ul>` : '<p class="empty">Chưa nạp file nào.</p>'}</section>
 <form method="post" action="/admin/settings"><div class="editor">
 <div><label for="prompt">Giọng văn và cách xử lý</label><p>Bot xưng hô thế nào, xử lý các tình huống thường gặp ra sao.</p>
 <textarea id="prompt" name="prompt">${esc(prompt)}</textarea></div>
-<div><label for="knowledge">Kho kiến thức</label><p>Bảng giá, hotline, quy định, câu hỏi thường gặp. Bot chỉ trả lời dựa trên phần này.</p>
+<div><label for="knowledge">Kho kiến thức</label><p>Bảng giá, hotline, quy định, câu hỏi thường gặp. Bot chỉ trả lời dựa trên phần này và các file đã nạp ở trên.
+Tổng cộng ${tokens(knowledge + files.map((f) => f.text).join(""))} mỗi lần bot trả lời: viết gọn, bỏ dòng trùng lặp là đỡ tốn.</p>
 <textarea id="knowledge" name="knowledge">${esc(knowledge)}</textarea></div>
 </div>
 <div class="follow"><label for="follow_up">Tin hỏi thăm khi khách im lặng 2 giờ</label>
