@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { extname } from "node:path"
-import { generateReply, HANDOVER_TAG, IMAGE_TAG, ORDER_TAG, PHONE_TAG } from "./ai.ts"
+import { generateReply, HANDOVER_TAG, IMAGE_TAG, NO_FOLLOW_UP_TAG, ORDER_TAG, PHONE_TAG } from "./ai.ts"
 import * as db from "./db.ts"
 import { PRICE_TAG, priceResult } from "./price.ts"
 import * as zalo from "./zalo.ts"
@@ -141,7 +141,9 @@ function finish(userId: string, raw: string): Outgoing[] {
     .map((id) => db.getImage(id))
     .filter((img): img is db.Image => !!img)
   const wantsPhone = reply.includes(PHONE_TAG)
-  reply = reply.replace(IMAGE_TAG, "").replaceAll(PHONE_TAG, "").replace(/\n{3,}/g, "\n\n").trim().slice(0, 2000)
+  // Khách tra đơn / khiếu nại: coi như đã hỏi thăm lần này, khách nhắn lại thì tính lại từ đầu.
+  if (reply.includes(NO_FOLLOW_UP_TAG)) db.markFollowedUp(userId)
+  reply = reply.replace(IMAGE_TAG, "").replaceAll(PHONE_TAG, "").replaceAll(NO_FOLLOW_UP_TAG, "").replace(/\n{3,}/g, "\n\n").trim().slice(0, 2000)
 
   const out: Outgoing[] = []
   if (reply) {

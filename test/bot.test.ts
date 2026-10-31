@@ -261,3 +261,24 @@ test("khách nhắn thêm trong lúc AI đang soạn: bỏ câu đã soạn, kh�
     db.setKv("ai_provider", "gemini")
   }
 })
+
+test("khách tra đơn: AI thêm [KHONG_HOI_THAM] → ẩn thẻ, không hỏi thăm sau 2 giờ; khách nhắn lại thì hỏi thăm bình thường", async () => {
+  const restore = fakeAi(["Dạ anh tra cứu đơn trên app NewPost Khách Hàng hoặc gọi hotline ạ.\n[KHONG_HOI_THAM]"])
+  try {
+    db.addMessage("t1", "user", "mã vận đơn 607267991 sao chưa tới")
+    assert.deepEqual(textOf(await answer("t1")), ["Dạ anh tra cứu đơn trên app NewPost Khách Hàng hoặc gọi hotline ạ."])
+    const later = Date.now() + 3 * 3_600_000
+    assert.ok(!db.followUpCandidates(later - 20 * 3_600_000, later - 2 * 3_600_000, HANDOVER_REPLY).includes("t1"))
+  } finally {
+    restore()
+  }
+  onUserMessage("t1", "mà gửi 2kg đi Nhật giá sao")
+  const restore2 = fakeAi(["Dạ anh cho em xin kích thước ạ"])
+  try {
+    await answer("t1")
+    const later = Date.now() + 3 * 3_600_000
+    assert.ok(db.followUpCandidates(later - 20 * 3_600_000, later - 2 * 3_600_000, HANDOVER_REPLY).includes("t1"))
+  } finally {
+    restore2()
+  }
+})

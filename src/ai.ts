@@ -12,6 +12,8 @@ export const IMAGE_TAG = /\[GUI_ANH:(\d+)\]/g
 export const ORDER_TAG = "[DON_HANG]"
 /** AI thêm "[XIN_SDT]" khi cần số điện thoại: hệ thống gửi nút chia sẻ SĐT, khách bấm là xong, không phải gõ. */
 export const PHONE_TAG = "[XIN_SDT]"
+/** AI thêm "[KHONG_HOI_THAM]" khi khách không có nhu cầu gửi hàng mới (tra đơn, khiếu nại…): bot không gửi tin hỏi thăm 2 giờ. */
+export const NO_FOLLOW_UP_TAG = "[KHONG_HOI_THAM]"
 
 const RULES = `
 # QUY TẮC BẮT BUỘC
@@ -32,6 +34,8 @@ const RULES = `
   là thông tin khách vừa gửi qua nút đó. Khi đã đủ: cảm ơn khách, báo nhân viên sẽ gọi xác nhận và hẹn lấy hàng,
   rồi thêm MỘT dòng cuối đúng mẫu (hệ thống tự ẩn dòng này với khách):
   ${ORDER_TAG} Nước đến: ... | Hàng: ... | Cân nặng: ... | Kích thước: ... | Giá báo: ... | SĐT: ... | Lấy hàng: ...
+- Khách đang hỏi về đơn đã gửi (tra cứu, mã vận đơn, hàng chậm, thất lạc), khiếu nại, hoặc nói rõ không có nhu cầu gửi hàng:
+  thêm MỘT dòng cuối "${NO_FOLLOW_UP_TAG}" (hệ thống tự ẩn, để không nhắn mời chốt đơn với khách này).
 - Trả lời ngắn gọn, dưới 1500 ký tự, văn bản thuần (không dùng markdown như ** hay #).`
 
 /** Danh sách ảnh nhân viên đã tải lên, để AI chọn gửi kèm câu trả lời. */
