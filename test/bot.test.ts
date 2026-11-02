@@ -272,6 +272,7 @@ test("khách tra đơn: AI thêm [KHONG_HOI_THAM] → ẩn thẻ, không hỏi t
   } finally {
     restore()
   }
+  await new Promise((r) => setTimeout(r, 5)) // tin mới phải sau mốc đã hỏi thăm (cùng mili giây thì không tính)
   onUserMessage("t1", "mà gửi 2kg đi Nhật giá sao")
   const restore2 = fakeAi(["Dạ anh cho em xin kích thước ạ"])
   try {

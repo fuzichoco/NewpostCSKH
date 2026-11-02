@@ -303,7 +303,7 @@ async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) 
     }
     case "POST /admin/notify/staff":
       notify.setStaff(id, form.get("on") === "1")
-      return form.get("back") === "u" ? redirect(res, `/admin/u?id=${encodeURIComponent(id)}#latest`) : dashBack(res, "Đã cập nhật nhân viên nhận thông báo.")
+      return form.get("back") === "u" ? redirect(res, `/admin/u?id=${encodeURIComponent(id)}#latest`) : dashBack(res, form.get("on") === "1" ? "Đã thêm nhân viên nhận thông báo." : "Đã gỡ nhân viên khỏi danh sách nhận thông báo.")
     case "POST /admin/toggle":
       db.setKv("bot_enabled", db.getKv("bot_enabled") === "0" ? "1" : "0")
       return redirect(res, "/admin")

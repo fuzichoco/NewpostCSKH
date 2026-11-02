@@ -348,7 +348,7 @@ ${p.telegram.hasToken ? '<button class="btn danger" name="action" value="clear" 
 <p class="muted">Nhân viên quan tâm OA và nhắn OA 1 tin. Mở hội thoại của nhân viên đó, bấm <b>Nhận thông báo</b>.
 Zalo chỉ cho OA nhắn trong 48 giờ kể từ tin cuối của nhân viên, nên nhân viên cần nhắn OA ít nhất 2 ngày 1 lần (bot không trả lời nhân viên).</p>
 <ul class="kfiles">${p.staff.map((s) => `<li><a href="/admin/u?id=${encodeURIComponent(s.id)}">${esc(displayName(s))}</a>
-<form method="post" action="/admin/notify/staff"><input type="hidden" name="id" value="${esc(s.id)}"><button class="btn ghost">Bỏ</button></form></li>`).join("")
+<form method="post" action="/admin/notify/staff"><input type="hidden" name="id" value="${esc(s.id)}"><button class="btn danger" aria-label="Gỡ ${esc(displayName(s))} khỏi danh sách nhận thông báo" onclick="return confirm('Gỡ nhân viên này khỏi danh sách nhận thông báo?')">Gỡ khỏi danh sách</button></form></li>`).join("")
   || '<li class="empty">Chưa có nhân viên nào.</li>'}</ul>
 </details>
 ${waiting.length
