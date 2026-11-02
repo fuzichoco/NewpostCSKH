@@ -67,12 +67,13 @@ export function chargeableWeight(kg: number, dims?: number[]) {
   return Math.ceil(Math.max(kg, volume) * 2 - 1e-9) / 2
 }
 
-/** Giá một kiện ở một vùng: trọn gói theo dòng cân; vượt mốc trọn gói thì số kg (làm tròn lên 1 kg) × đơn giá của khoảng cân. */
+/** Giá một kiện ở một vùng: trọn gói theo dòng cân; vượt mốc trọn gói thì số kg (làm tròn lên bước cân) × đơn giá của khoảng cân. */
 function tablePrice(t: Table, zone: number, w: number): number | null {
   const flat = t.rows.find((r) => !r.perKg && r.kg >= w - 1e-9)
   if (flat) return Math.round(flat.prices[zone])
-  // ponytail: phần vượt mốc làm tròn lên 1 kg theo cột "TL Nhảy" = 1; hãng tính bước 0,5 kg thì đổi Math.ceil(w) thành w.
-  const kg = Math.ceil(w - 1e-9)
+  // Mốc khoảng cân lẻ 0,5 (DHL Việt Nam: 49,5 / 69,5…) là tính theo bước 0,5 kg; mốc chẵn (FedEx, UPS…: 44 / 70…) làm tròn lên 1 kg.
+  const step = t.rows.some((r) => r.perKg && r.kg % 1) ? 0.5 : 1
+  const kg = Math.ceil(w / step - 1e-9) * step
   const band = t.rows.find((r) => r.perKg && kg <= r.kg + 1e-9)
   return band ? Math.round(band.prices[zone] * kg) : null
 }

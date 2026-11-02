@@ -1,5 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { setDefaultResultOrder } from "node:dns"
+import { setDefaultAutoSelectFamily } from "node:net"
 import { extname } from "node:path"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import * as ai from "./ai.ts"
@@ -11,6 +13,11 @@ import { deletePriceService, listPriceServices, parsePriceWorkbook, savePriceSer
 import * as views from "./views.ts"
 import * as zalo from "./zalo.ts"
 import * as zns from "./zns.ts"
+
+// VPS có địa chỉ IPv6 nhưng không có đường ra IPv6, còn IPv4 tới Telegram mất ~1,5 giây: Node mặc định chỉ chờ IPv4
+// 0,25 giây rồi chuyển sang IPv6 hỏng (fetch failed). Dùng IPv4 trước, chờ đủ lâu.
+setDefaultResultOrder("ipv4first")
+setDefaultAutoSelectFamily(false)
 
 const env = process.env
 const TEST_USER = "test-admin"

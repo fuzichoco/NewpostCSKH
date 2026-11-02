@@ -307,8 +307,12 @@ export function dashboard(p: {
   replyFrom: string; replyTo: string; debounce: number; inHours: boolean
   staff: { id: string; name: string | null }[]; telegram: { hasToken: boolean; chat: string }; flash: string
 }) {
-  const waiting = p.users.filter(isPaused)
-  const others = p.users.filter((u) => !isPaused(u))
+  // Nhân viên nhận thông báo cũng nhắn OA: xếp mục riêng, không lẫn vào khách.
+  const staffSet = new Set(p.staff.map((s) => s.id))
+  const staffRows = p.users.filter((u) => staffSet.has(u.id))
+  const customers = p.users.filter((u) => !staffSet.has(u.id))
+  const waiting = customers.filter(isPaused)
+  const others = customers.filter((u) => !isPaused(u))
   const zalo = p.zaloConnected
     ? `<span title="Token tự làm mới, hết hạn ${esc(fullTime(p.tokenExpires))}"><span class="dot"></span>Đã kết nối Zalo OA</span>
        <a class="muted" href="/admin/zalo/connect">Kết nối lại</a>`
@@ -334,7 +338,7 @@ ${p.flash ? `<p class="banner" role="status">${esc(p.flash)}</p>` : ""}
 </form>
 <details class="group panel"><summary><b>Thông báo cho nhân viên khi có khách nhắn</b>
 <span class="muted">· Telegram: ${p.telegram.hasToken && p.telegram.chat ? "đã cài" : "chưa cài"} · Zalo: ${p.staff.length} nhân viên</span></summary>
-<p class="muted">Mỗi khi khách nhắn (khách đã nhắn liên tục thì 30 phút mới báo lại) và khi bot chuyển khách cho nhân viên.</p>
+<p class="muted">Khi khách nhắn và khi bot chuyển khách cho nhân viên. Mỗi khách chỉ báo 1 lần mỗi ngày cho mỗi loại, khách nhắn nhiều không báo lặp.</p>
 <h3>Nhóm Telegram</h3>
 <p class="muted">1. Trên Telegram nhắn <b>@BotFather</b> lệnh /newbot để tạo bot, chép mã token. 2. Thêm bot vào nhóm nhân viên và nhắn 1 tin bất kỳ trong nhóm.
 3. Dán token vào đây, để trống chat ID, bấm Lưu (hệ thống tự tìm nhóm).</p>
@@ -356,16 +360,21 @@ ${waiting.length
 <div class="tape-band" aria-hidden="true"></div><ul class="list">${waiting.map(userRow).join("")}</ul></section>`
   : ""}
 <section class="group"><h2>Bot đang trả lời <span class="muted">(${others.length})</span></h2>
-<ul class="list">${others.map(userRow).join("") || '<li class="empty">Chưa có khách nào nhắn vào OA. Thử bot ở mục Chat thử trong lúc chờ.</li>'}</ul></section>`,
+<ul class="list">${others.map(userRow).join("") || '<li class="empty">Chưa có khách nào nhắn vào OA. Thử bot ở mục Chat thử trong lúc chờ.</li>'}</ul></section>
+${staffRows.length
+  ? `<section class="group"><h2>Nhân viên nhận thông báo <span class="muted">(${staffRows.length})</span></h2>
+<ul class="list">${staffRows.map(userRow).join("")}</ul></section>`
+  : ""}`,
   )
 }
 
 export function conversation(u: User | undefined, id: string, msgs: Message[], err = "", isStaff = false) {
-  const staff = isPaused(u)
+  // Nhân viên nhận thông báo: bot không trả lời họ, nên luôn hiện ô chat, không cần các nhắc nhở dành cho khách.
+  const staff = isPaused(u) || isStaff
   const name = displayName({ id, name: u?.name ?? null })
   const hiddenId = `<input type="hidden" name="id" value="${esc(id)}">`
   // Zalo chỉ cho OA nhắn tư vấn trong 48 giờ kể từ tin cuối của khách.
-  const windowClosed = !!u?.last_user_at && Date.now() - u.last_user_at > 48 * 3_600_000
+  const windowClosed = !isStaff && !!u?.last_user_at && Date.now() - u.last_user_at > 48 * 3_600_000
   const role = `<form class="seg" method="post" action="/admin/u/bot" aria-label="Ai trả lời khách này">${hiddenId}
 <button name="action" value="resume"${staff ? "" : ' aria-pressed="true"'}>Bot trả lời</button>
 <button name="action" value="pause"${staff ? ' aria-pressed="true"' : ""}>Nhân viên chat</button></form>`
@@ -379,11 +388,11 @@ export function conversation(u: User | undefined, id: string, msgs: Message[], e
     name,
     "chats",
     `<div class="convo-top"><a class="back" href="/admin">‹ Tất cả hội thoại</a>
-<div class="head"><div><h1>${esc(name)}</h1><div class="muted">${u?.phone ? `SĐT ${esc(phoneView(u.phone))} · ` : ""}Zalo ID ${esc(id)}</div></div>${role}</div>
+<div class="head"><div><h1>${esc(name)}</h1><div class="muted">${u?.phone ? `SĐT ${esc(phoneView(u.phone))} · ` : ""}Zalo ID ${esc(id)}</div></div>${isStaff ? "" : role}</div>
 <form class="inline" method="post" action="/admin/notify/staff">${hiddenId}<input type="hidden" name="back" value="u"><input type="hidden" name="on" value="${isStaff ? "0" : "1"}">
 <span class="muted">${isStaff ? "Đây là nhân viên nhận thông báo khách nhắn (bot không trả lời người này)." : "Người này là nhân viên?"}</span>
 <button class="btn ghost">${isStaff ? "Thôi nhận thông báo" : "Nhận thông báo"}</button></form></div>
-${staff ? `<p class="banner">Bạn đang chat với khách này thay bot, bot im lặng đến ${esc(fullTime(u!.paused_until))}. Bấm Bot trả lời để giao lại cho bot.</p>` : ""}
+${staff && !isStaff ? `<p class="banner">Bạn đang chat với khách này thay bot, bot im lặng đến ${esc(fullTime(u!.paused_until))}. Bấm Bot trả lời để giao lại cho bot.</p>` : ""}
 ${err ? `<p class="banner error" role="alert">Chưa gửi được tin: ${esc(err)}</p>` : ""}
 ${thread(msgs)}
 ${composer}

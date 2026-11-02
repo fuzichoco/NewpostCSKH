@@ -162,7 +162,7 @@ function finish(userId: string, raw: string): Outgoing[] {
 function handover(userId: string): Outgoing {
   db.pauseBot(userId, HANDOVER_MINUTES)
   db.addMessage(userId, "bot", HANDOVER_REPLY)
-  if (userId !== "test-admin") notifyStaff(userId, "⚠️ Khách cần nhân viên hỗ trợ")
+  if (userId !== "test-admin") notifyStaff(userId, "handover", "⚠️ Khách cần nhân viên hỗ trợ")
   return { text: HANDOVER_REPLY }
 }
 
@@ -207,26 +207,26 @@ export const DEBOUNCE_DEFAULT = 15
 const debounceMs = () => 1000 * Number(db.getKv("debounce_seconds") ?? DEBOUNCE_DEFAULT)
 
 // --- Báo nhân viên ---
-/** Khách đang nhắn liên tục thì không báo lại: chỉ báo khi khách nhắn tin mới sau ngần này phút kể từ lần báo trước. */
-const NOTIFY_GAP_MS = 30 * 60_000
+const dayVN = (now: number) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(now)
 
-function notifyStaff(userId: string, title: string, text = "") {
+/** Mỗi loại thông báo chỉ báo 1 lần mỗi ngày (giờ Việt Nam) cho mỗi khách: khách nhắn nhiều không báo lặp. */
+function notifyStaff(userId: string, kind: "msg" | "handover", title: string, text = "", now = Date.now()) {
+  const key = `notified_${kind}:${userId}`
+  if (db.getKv(key) === dayVN(now)) return
+  db.setKv(key, dayVN(now))
   const u = db.getUser(userId)
   const who = `${u?.name || "Khách chưa rõ tên"}${u?.phone ? ` · SĐT 0${u.phone.slice(2)}` : ""}`
   const link = process.env.PUBLIC_URL ? `\nXem: ${process.env.PUBLIC_URL}/admin/u?id=${encodeURIComponent(userId)}` : ""
   notify.notifyStaff(`${title}: ${who}${text ? `\n"${text.slice(0, 300)}"` : ""}${link}`).catch(() => {})
 }
 
-/** Khách vừa nhắn (sau khi chờ khách nhắn xong): báo nhân viên, trừ khi vừa báo về khách này. */
-function notifyNewMessage(userId: string, now = Date.now()) {
+/** Khách vừa nhắn (sau khi chờ khách nhắn xong): báo nhân viên lần đầu trong ngày. */
+function notifyNewMessage(userId: string) {
   if (notify.staffIds().includes(userId)) return
   const hist = db.history(userId, 20)
-  const pending: db.Message[] = []
-  for (let i = hist.length - 1; i >= 0 && hist[i].role === "user"; i--) pending.unshift(hist[i])
-  const last = Number(db.getKv(`notified_at:${userId}`) ?? 0)
-  if (!pending.length || pending.at(-1)!.created_at <= last || now - last < NOTIFY_GAP_MS) return
-  db.setKv(`notified_at:${userId}`, String(now))
-  notifyStaff(userId, "🔔 Khách nhắn Zalo OA", pending.map((m) => m.text).join("\n"))
+  const pending: string[] = []
+  for (let i = hist.length - 1; i >= 0 && hist[i].role === "user"; i--) pending.unshift(hist[i].text)
+  if (pending.length) notifyStaff(userId, "msg", "🔔 Khách nhắn Zalo OA", pending.join("\n"))
 }
 
 const timers = new Map<string, NodeJS.Timeout>()

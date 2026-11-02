@@ -45,7 +45,7 @@ Sau khi bot chuyển, nếu **10 phút** không có nhân viên trả lời thì
 **Giờ trả lời và thời gian chờ:** đầu trang *Hội thoại*, chọn *Bot trả lời từ … đến …* (để trống là cả ngày) và *Chờ khách nhắn xong … giây* → *Lưu*.
 Ngoài giờ bot im; tới giờ mở bot trả lời các tin khách nhắn trong 12 giờ qua. Tin hỏi thăm 2 giờ cũng chỉ gửi trong giờ trả lời.
 
-**Báo nhân viên khi có khách nhắn:** trang *Hội thoại* → *Thông báo cho nhân viên*. Báo khi khách nhắn (khách đang nhắn liên tục thì 30 phút mới báo lại) và khi bot chuyển nhân viên.
+**Báo nhân viên khi có khách nhắn:** trang *Hội thoại* → *Thông báo cho nhân viên*. Báo khi khách nhắn và khi bot chuyển nhân viên; mỗi khách chỉ báo 1 lần mỗi ngày cho mỗi loại.
 - Nhóm Telegram: tạo bot bằng @BotFather, thêm bot vào nhóm, nhắn 1 tin trong nhóm, dán token → *Lưu và gửi thử*.
 - Zalo cá nhân: nhân viên quan tâm OA và nhắn OA 1 tin → mở hội thoại của nhân viên → *Nhận thông báo*. Zalo chỉ cho OA nhắn trong 48 giờ kể từ tin cuối của nhân viên, nên nhân viên nhắn OA ít nhất 2 ngày 1 lần.
 

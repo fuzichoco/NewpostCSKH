@@ -324,3 +324,26 @@ test("báo nhân viên: chuyển nhân viên thì báo Telegram; nhân viên nh�
     db.setKv("tg_token", "")
   }
 })
+
+test("báo nhân viên: mỗi khách chỉ báo 1 lần mỗi ngày dù nhắn nhiều", async () => {
+  db.setKv("tg_token", "t")
+  db.setKv("tg_chat", "-100")
+  const sent: string[] = []
+  const real = globalThis.fetch
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    sent.push(JSON.parse(String(init?.body)).text)
+    return Response.json({ ok: true, result: {} })
+  }) as typeof fetch
+  try {
+    for (const text of ["cho gặp nhân viên", "alo", "gặp người thật"]) {
+      db.addMessage("n2", "user", text)
+      db.pauseBot("n2", 0)
+      await answer("n2")
+    }
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(sent.length, 1)
+  } finally {
+    globalThis.fetch = real
+    db.setKv("tg_token", "")
+  }
+})

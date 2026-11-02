@@ -101,3 +101,16 @@ test("bảng giá Excel: nhận diện, tính cước trọn gói / theo kg / qu
   assert.match(text, /kích thước chưa có/)
   assert.match(text, /Tổng các kiện:\n- ABC: 300\.000đ/)
 })
+
+test("bảng giá: mốc khoảng cân lẻ 0,5 (DHL Việt Nam) thì tính theo bước 0,5 kg, mốc chẵn thì làm tròn lên 1 kg", async () => {
+  const { quote } = await import("../src/price.ts")
+  const table = (bands: number[]) => ({
+    zones: [{ name: "Z1", codes: ["JP"], time: "" }],
+    rows: [{ kg: 30, perKg: false, prices: [3_000_000] }, ...bands.map((kg) => ({ kg, perKg: true, prices: [100_000] }))],
+  })
+  const svc = (code: string, bands: number[]) => ({ code, name: code, file: "", updated: 0, goods: table(bands) })
+  const price = (s: ReturnType<typeof svc>, kg: number) => quote("JP", kg, undefined, false, [s as any]).quotes[0].price
+  assert.equal(price(svc("VDHL", [49.5, 69.5]), 30.5), 3_050_000) // 30,5 kg × 100.000
+  assert.equal(price(svc("VDHL", [49.5, 69.5]), 49.6), 5_000_000) // làm tròn 50 kg, khoảng 69,5
+  assert.equal(price(svc("UPS", [44, 70]), 30.5), 3_100_000) // làm tròn lên 31 kg
+})
