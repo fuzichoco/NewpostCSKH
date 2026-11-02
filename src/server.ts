@@ -5,6 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import * as ai from "./ai.ts"
 import * as bot from "./bot.ts"
 import * as db from "./db.ts"
+import * as notify from "./notify.ts"
 import { deleteKnowledgeFile, fileToText, listKnowledgeFiles, saveKnowledgeFile } from "./import.ts"
 import { deletePriceService, listPriceServices, parsePriceWorkbook, savePriceService } from "./price.ts"
 import * as views from "./views.ts"
@@ -229,6 +230,8 @@ function statsData(date: string | null) {
   return { day, customers: db.customersBetween(from, to, bot.HANDOVER_REPLY), orders: db.ordersBetween(from, to) }
 }
 
+const dashBack = (res: ServerResponse, msg: string) => redirect(res, `/admin?msg=${encodeURIComponent(msg)}`)
+
 async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) {
   if (!isLoggedIn(req)) {
     if (req.method === "GET") return redirect(res, `/login?next=${encodeURIComponent(url.pathname + url.search)}`)
@@ -254,12 +257,58 @@ async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) 
         botEnabled: db.getKv("bot_enabled") !== "0",
         zaloConnected: !!db.getKv("refresh_token"),
         tokenExpires: Number(db.getKv("expires_at") ?? 0),
+        replyFrom: db.getKv("reply_from") ?? "",
+        replyTo: db.getKv("reply_to") ?? "",
+        debounce: Number(db.getKv("debounce_seconds") ?? bot.DEBOUNCE_DEFAULT),
+        inHours: bot.inReplyHours(),
+        staff: notify.staffIds().map((sid) => ({ id: sid, name: db.getUser(sid)?.name ?? null })),
+        telegram: { hasToken: !!db.getKv("tg_token"), chat: db.getKv("tg_chat") ?? "" },
+        flash: url.searchParams.get("msg") ?? "",
       }))
+    case "POST /admin/hours": {
+      const from = form.get("from") ?? "", to = form.get("to") ?? ""
+      const time = /^([01]\d|2[0-3]):[0-5]\d$/
+      const wait = Number(form.get("debounce"))
+      if ((from && !time.test(from)) || (to && !time.test(to))) return dashBack(res, "Giờ không hợp lệ.")
+      if (!Number.isInteger(wait) || wait < 0 || wait > 300) return dashBack(res, "Thời gian chờ phải từ 0 đến 300 giây.")
+      db.setKv("reply_from", from)
+      db.setKv("reply_to", to)
+      db.setKv("debounce_seconds", String(wait))
+      return dashBack(res, from && to && from !== to ? `Đã lưu: bot trả lời từ ${from} đến ${to}, chờ khách ${wait} giây.` : `Đã lưu: bot trả lời cả ngày, chờ khách ${wait} giây.`)
+    }
+    case "POST /admin/notify": {
+      const token = form.get("token")?.trim() || db.getKv("tg_token") || ""
+      let chat = form.get("chat")?.trim() ?? ""
+      if (form.get("action") === "clear") {
+        db.setKv("tg_token", "")
+        db.setKv("tg_chat", "")
+        return dashBack(res, "Đã tắt thông báo Telegram.")
+      }
+      try {
+        if (token && !chat) {
+          const found = await notify.findTelegramChat(token)
+          if (!found) return dashBack(res, "Chưa thấy nhóm nào. Thêm bot Telegram vào nhóm, nhắn 1 tin trong nhóm rồi bấm Lưu lại.")
+          chat = found.id
+        }
+        if (form.get("token")?.trim()) db.setKv("tg_token", token)
+        db.setKv("tg_chat", chat)
+        if (form.get("action") === "test") {
+          const errors = await notify.notifyStaff("✅ Thử thông báo từ hệ thống CSKH Zalo OA: nhân viên sẽ nhận tin như thế này khi có khách nhắn.")
+          return dashBack(res, errors.length ? `Gửi thử có lỗi: ${errors.join("; ")}` : "Đã gửi tin thử tới tất cả kênh thông báo.")
+        }
+        return dashBack(res, chat ? `Đã lưu Telegram (chat ID ${chat}).` : "Đã lưu.")
+      } catch (e) {
+        return dashBack(res, e instanceof Error ? e.message : String(e))
+      }
+    }
+    case "POST /admin/notify/staff":
+      notify.setStaff(id, form.get("on") === "1")
+      return form.get("back") === "u" ? redirect(res, `/admin/u?id=${encodeURIComponent(id)}#latest`) : dashBack(res, "Đã cập nhật nhân viên nhận thông báo.")
     case "POST /admin/toggle":
       db.setKv("bot_enabled", db.getKv("bot_enabled") === "0" ? "1" : "0")
       return redirect(res, "/admin")
     case "GET /admin/u":
-      return send(res, 200, views.conversation(db.getUser(id), id, db.history(id, 200), url.searchParams.get("err") ?? ""))
+      return send(res, 200, views.conversation(db.getUser(id), id, db.history(id, 200), url.searchParams.get("err") ?? "", notify.staffIds().includes(id)))
     case "POST /admin/u/bot":
       db.pauseBot(id, form.get("action") === "pause" ? bot.STAFF_MODE_MINUTES : 0)
       return redirect(res, `/admin/u?id=${encodeURIComponent(id)}#latest`)

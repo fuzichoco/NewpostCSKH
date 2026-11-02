@@ -6,7 +6,7 @@ import { createHash } from "node:crypto"
 import { test } from "node:test"
 
 const db = await import("../src/db.ts")
-const { answer, findPhone, onOaMessage, onUserInfo, onUserMessage, resumeAfterHandover, staffSend, wantsHuman, HANDOVER_REPLY, PHONE_REQUEST_LOG } =
+const { answer, findPhone, inReplyHours, onOaMessage, onUserInfo, onUserMessage, resumeAfterHandover, staffSend, wantsHuman, HANDOVER_REPLY, PHONE_REQUEST_LOG } =
   await import("../src/bot.ts")
 const { verifySignature } = await import("../src/zalo.ts")
 const views = await import("../src/views.ts")
@@ -280,5 +280,46 @@ test("khách tra đơn: AI thêm [KHONG_HOI_THAM] → ẩn thẻ, không hỏi t
     assert.ok(db.followUpCandidates(later - 20 * 3_600_000, later - 2 * 3_600_000, HANDOVER_REPLY).includes("t1"))
   } finally {
     restore2()
+  }
+})
+
+test("giờ trả lời: trong khung, qua đêm, để trống là cả ngày", () => {
+  const vn = (hm: string) => Date.parse(`2026-11-02T${hm}:00+07:00`)
+  assert.ok(inReplyHours(vn("03:00")))
+  db.setKv("reply_from", "08:00")
+  db.setKv("reply_to", "21:00")
+  assert.ok(!inReplyHours(vn("07:59")) && inReplyHours(vn("08:00")) && inReplyHours(vn("20:59")) && !inReplyHours(vn("21:00")))
+  db.setKv("reply_from", "20:00")
+  db.setKv("reply_to", "06:00")
+  assert.ok(inReplyHours(vn("23:30")) && inReplyHours(vn("05:00")) && !inReplyHours(vn("12:00")))
+  db.setKv("reply_from", "")
+  db.setKv("reply_to", "")
+})
+
+test("báo nhân viên: chuyển nhân viên thì báo Telegram; nhân viên nhận thông báo nhắn OA thì bot không trả lời", async () => {
+  const notify = await import("../src/notify.ts")
+  db.setKv("tg_token", "t")
+  db.setKv("tg_chat", "-100")
+  const sent: string[] = []
+  const real = globalThis.fetch
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    sent.push(JSON.parse(String(init?.body)).text)
+    return Response.json({ ok: true, result: {} })
+  }) as typeof fetch
+  try {
+    db.addMessage("n1", "user", "cho gặp nhân viên")
+    db.setUserName("n1", "Chị Lan")
+    await answer("n1")
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(sent.length, 1)
+    assert.match(sent[0], /cần nhân viên.*Chị Lan/)
+    notify.setStaff("s1", true)
+    db.addMessage("s1", "user", "nhân viên đây")
+    assert.equal(await answer("s1"), null)
+    notify.setStaff("s1", false)
+    assert.deepEqual(notify.staffIds(), [])
+  } finally {
+    globalThis.fetch = real
+    db.setKv("tg_token", "")
   }
 })

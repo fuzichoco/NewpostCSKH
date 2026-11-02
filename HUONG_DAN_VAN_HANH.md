@@ -42,6 +42,13 @@ File khác (.md, Word, .txt…) thành kiến thức cho bot; nạp lại cùng 
 Bot tự chuyển cho nhân viên khi: khách đòi gặp người thật, khiếu nại, hỏi giá nước chưa có trong bảng, hoặc nhân viên đã trả lời trong app Zalo OA.
 Sau khi bot chuyển, nếu **10 phút** không có nhân viên trả lời thì bot tự nhận lại khách, xin lỗi vì để khách chờ và trả lời tiếp (ca khó thì xin số điện thoại để nhân viên gọi lại). Nhân viên đã trả lời hoặc bấm *Nhân viên chat* thì bot không nhận lại.
 
+**Giờ trả lời và thời gian chờ:** đầu trang *Hội thoại*, chọn *Bot trả lời từ … đến …* (để trống là cả ngày) và *Chờ khách nhắn xong … giây* → *Lưu*.
+Ngoài giờ bot im; tới giờ mở bot trả lời các tin khách nhắn trong 12 giờ qua. Tin hỏi thăm 2 giờ cũng chỉ gửi trong giờ trả lời.
+
+**Báo nhân viên khi có khách nhắn:** trang *Hội thoại* → *Thông báo cho nhân viên*. Báo khi khách nhắn (khách đang nhắn liên tục thì 30 phút mới báo lại) và khi bot chuyển nhân viên.
+- Nhóm Telegram: tạo bot bằng @BotFather, thêm bot vào nhóm, nhắn 1 tin trong nhóm, dán token → *Lưu và gửi thử*.
+- Zalo cá nhân: nhân viên quan tâm OA và nhắn OA 1 tin → mở hội thoại của nhân viên → *Nhận thông báo*. Zalo chỉ cho OA nhắn trong 48 giờ kể từ tin cuối của nhân viên, nên nhân viên nhắn OA ít nhất 2 ngày 1 lần.
+
 Khi cần số điện thoại (chốt đơn, hẹn gọi lại), bot gửi kèm nút **Chia sẻ số điện thoại**: khách bấm là số tự lưu vào hệ thống, không phải gõ. Zalo không cho lấy số điện thoại nếu khách chưa đồng ý chia sẻ.
 
 ## 3. Cài trên máy mới (chỉ làm một lần)

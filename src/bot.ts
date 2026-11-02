@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises"
 import { extname } from "node:path"
 import { generateReply, HANDOVER_TAG, IMAGE_TAG, NO_FOLLOW_UP_TAG, ORDER_TAG, PHONE_TAG } from "./ai.ts"
 import * as db from "./db.ts"
+import * as notify from "./notify.ts"
 import { PRICE_TAG, priceResult } from "./price.ts"
 import * as zalo from "./zalo.ts"
 import { normalizePhone } from "./zns.ts"
@@ -72,7 +73,7 @@ function customerInfo(userId: string) {
 /** Sinh câu trả lời cho các tin khách chưa được trả lời, lưu vào DB, trả về các tin cần gửi (chữ trước, ảnh sau).
  *  Trả về null nếu không cần trả lời (bot tắt / đang chuyển nhân viên / không có tin mới). */
 export async function answer(userId: string): Promise<Outgoing[] | null> {
-  if (db.getKv("bot_enabled") === "0" || db.isPaused(userId)) return null
+  if (db.getKv("bot_enabled") === "0" || db.isPaused(userId) || notify.staffIds().includes(userId)) return null
   const hist = db.history(userId, 20)
   const pending: string[] = []
   for (let i = hist.length - 1; i >= 0 && hist[i].role === "user"; i--) pending.push(hist[i].text)
@@ -96,7 +97,7 @@ const RESUME_FALLBACK =
 
 /** Bot chuyển nhân viên mà quá HANDOVER_MINUTES chưa có nhân viên trả lời: bot nhận lại và trả lời tiếp. */
 export async function resumeAfterHandover(now = Date.now()) {
-  if (db.getKv("bot_enabled") === "0") return
+  if (db.getKv("bot_enabled") === "0" || !inReplyHours(now)) return
   // Chỉ xét các lần chuyển hết hạn trong 6 giờ gần đây, tránh gửi cho hội thoại cũ.
   for (const userId of db.handoverExpired(now - 6 * 3_600_000, now, HANDOVER_REPLY)) {
     if (busy.has(userId)) continue
@@ -161,6 +162,7 @@ function finish(userId: string, raw: string): Outgoing[] {
 function handover(userId: string): Outgoing {
   db.pauseBot(userId, HANDOVER_MINUTES)
   db.addMessage(userId, "bot", HANDOVER_REPLY)
+  if (userId !== "test-admin") notifyStaff(userId, "⚠️ Khách cần nhân viên hỗ trợ")
   return { text: HANDOVER_REPLY }
 }
 
@@ -187,17 +189,58 @@ async function deliver(userId: string, out: Outgoing[]) {
   }
 }
 
-// Chờ khách nhắn xong (khách hay gửi nhiều tin liền, gõ điện thoại chậm) rồi đọc hết các tin và trả lời 1 lần.
-const DEBOUNCE_MS = 15_000
+// --- Giờ trả lời và thời gian chờ (sửa ở đầu trang Hội thoại) ---
+const timeVN = (now: number) =>
+  new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now)
+
+/** Bot chỉ trả lời trong khung giờ "HH:MM"–"HH:MM" (giờ Việt Nam, cho phép qua đêm như 20:00–06:00).
+ *  Chưa đặt hoặc 2 mốc bằng nhau: trả lời cả ngày. */
+export function inReplyHours(now = Date.now()) {
+  const from = db.getKv("reply_from") ?? "", to = db.getKv("reply_to") ?? ""
+  if (!from || !to || from === to) return true
+  const t = timeVN(now)
+  return from < to ? t >= from && t < to : t >= from || t < to
+}
+
+export const DEBOUNCE_DEFAULT = 15
+/** Chờ khách nhắn xong (khách hay gửi nhiều tin liền, gõ điện thoại chậm) rồi đọc hết các tin và trả lời 1 lần. */
+const debounceMs = () => 1000 * Number(db.getKv("debounce_seconds") ?? DEBOUNCE_DEFAULT)
+
+// --- Báo nhân viên ---
+/** Khách đang nhắn liên tục thì không báo lại: chỉ báo khi khách nhắn tin mới sau ngần này phút kể từ lần báo trước. */
+const NOTIFY_GAP_MS = 30 * 60_000
+
+function notifyStaff(userId: string, title: string, text = "") {
+  const u = db.getUser(userId)
+  const who = `${u?.name || "Khách chưa rõ tên"}${u?.phone ? ` · SĐT 0${u.phone.slice(2)}` : ""}`
+  const link = process.env.PUBLIC_URL ? `\nXem: ${process.env.PUBLIC_URL}/admin/u?id=${encodeURIComponent(userId)}` : ""
+  notify.notifyStaff(`${title}: ${who}${text ? `\n"${text.slice(0, 300)}"` : ""}${link}`).catch(() => {})
+}
+
+/** Khách vừa nhắn (sau khi chờ khách nhắn xong): báo nhân viên, trừ khi vừa báo về khách này. */
+function notifyNewMessage(userId: string, now = Date.now()) {
+  if (notify.staffIds().includes(userId)) return
+  const hist = db.history(userId, 20)
+  const pending: db.Message[] = []
+  for (let i = hist.length - 1; i >= 0 && hist[i].role === "user"; i--) pending.unshift(hist[i])
+  const last = Number(db.getKv(`notified_at:${userId}`) ?? 0)
+  if (!pending.length || pending.at(-1)!.created_at <= last || now - last < NOTIFY_GAP_MS) return
+  db.setKv(`notified_at:${userId}`, String(now))
+  notifyStaff(userId, "🔔 Khách nhắn Zalo OA", pending.map((m) => m.text).join("\n"))
+}
+
 const timers = new Map<string, NodeJS.Timeout>()
 const busy = new Set<string>()
 
-function schedule(userId: string, ms = DEBOUNCE_MS) {
+function schedule(userId: string, ms = debounceMs()) {
   clearTimeout(timers.get(userId))
   timers.set(
     userId,
     setTimeout(async () => {
       timers.delete(userId)
+      notifyNewMessage(userId)
+      // Ngoài giờ: không trả lời, tới giờ mở bot đọc lại các tin còn chờ (startWorkers).
+      if (!inReplyHours()) return
       if (busy.has(userId)) return schedule(userId, 1000)
       busy.add(userId)
       try {
@@ -265,7 +308,7 @@ const hourVN = (now: number) =>
  *  Nội dung sửa ở trang Kiến thức & giọng văn; để trống là tắt. */
 export async function followUp(now = Date.now()) {
   const text = (db.getKv("follow_up_text") ?? FOLLOW_UP_DEFAULT).trim()
-  if (!text || db.getKv("bot_enabled") === "0") return
+  if (!text || db.getKv("bot_enabled") === "0" || !inReplyHours(now)) return
   const h = hourVN(now)
   if (h < 8 || h >= 21) return
   for (const userId of db.followUpCandidates(now - FOLLOW_UP_GIVE_UP_MS, now - FOLLOW_UP_AFTER_MS, HANDOVER_REPLY)) {
@@ -282,7 +325,12 @@ export async function followUp(now = Date.now()) {
 
 /** Việc chạy nền mỗi phút: hỏi thăm khách im lặng, bot nhận lại khách nhân viên chưa trả lời. */
 export function startWorkers() {
+  let open = inReplyHours()
   setInterval(() => {
+    // Vừa tới giờ trả lời: trả lời các tin khách nhắn ngoài giờ (trong 12 giờ qua).
+    const nowOpen = inReplyHours()
+    if (nowOpen && !open) for (const userId of db.pendingUsers(Date.now() - 12 * 3_600_000)) if (!timers.has(userId)) schedule(userId, 0)
+    open = nowOpen
     followUp().catch((err) => console.error("Hỏi thăm khách lỗi:", err))
     resumeAfterHandover().catch((err) => console.error("Bot nhận lại khách lỗi:", err))
   }, 60_000)
