@@ -3,7 +3,7 @@ import { GoogleGenAI } from "@google/genai"
 import { getKv, listImages } from "./db.ts"
 import type { Message } from "./db.ts"
 import { listKnowledgeFiles } from "./import.ts"
-import { listPriceServices } from "./price.ts"
+import { itemSurcharges, listPriceServices } from "./price.ts"
 
 /** AI trả về chuỗi này khi không chắc / cần người thật. */
 export const HANDOVER_TAG = "[CHUYEN_NHAN_VIEN]"
@@ -53,13 +53,19 @@ ${images.map((i) => `- [GUI_ANH:${i.id}] ${i.name}${i.usage ? ` — gửi khi: $
 function priceRules() {
   const services = listPriceServices()
   if (!services.length) return ""
+  // Có bảng phụ phí hải quan theo mặt hàng thì thẻ có thêm ô STT mặt hàng để code tra đúng mức phụ thu.
+  const items = itemSurcharges().length > 0
+  const itemRule = items
+    ? `\nSTT mặt hàng: số thứ tự (cột STT) trong bảng PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG nếu hàng của khách thuộc nhóm trong bảng
+(nhiều nhóm thì cách bằng dấu phẩy, ví dụ 7,14); không thuộc nhóm nào hoặc tài liệu thì "-". Chưa biết khách gửi hàng gì thì hỏi luôn cùng lúc hỏi kích thước.`
+    : ""
   return `\n# BÁO GIÁ CƯỚC QUỐC TẾ
 Hệ thống có bảng giá: ${services.map((s) => s.name).join("; ")}. Bạn KHÔNG tự tra hay tự tính giá.
 Khách hỏi giá: cần nước đến, tài liệu hay hàng hóa, cân nặng thực tế từng kiện, kích thước Dài × Rộng × Cao (cm) từng kiện.
 Thiếu thì hỏi thêm. Tài liệu (giấy tờ) thì KHÔNG hỏi kích thước; khách không biết kích thước thì thôi; hai trường hợp này dùng "-".
 Đủ rồi thì trả lời CHỈ các dòng thẻ, mỗi kiện một dòng:
-[TINH_GIA: mã nước ISO 2 chữ | cân nặng kg | DàixRộngxCao hoặc - | hang hoặc tai_lieu]
-Ví dụ: [TINH_GIA: JP | 3 | 40x30x30 | hang]. Nam Trung Quốc (Quảng Châu, Thâm Quyến, Đông Quan, Phúc Kiến, Phúc Châu…) dùng mã CN1.
+[TINH_GIA: mã nước ISO 2 chữ | cân nặng kg | DàixRộngxCao hoặc - | hang hoặc tai_lieu${items ? " | STT mặt hàng hoặc -" : ""}]${itemRule}
+Ví dụ: [TINH_GIA: JP | 3 | 40x30x30 | hang${items ? " | 7" : ""}]. Nam Trung Quốc (Quảng Châu, Thâm Quyến, Đông Quan, Phúc Kiến, Phúc Châu…) dùng mã CN1.
 Hệ thống sẽ tính và đưa lại "KẾT QUẢ TÍNH GIÁ" để bạn viết câu báo giá cho khách.`
 }
 

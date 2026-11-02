@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { xlsxSheets } from "./import.ts"
+import { listKnowledgeFiles, xlsxSheets } from "./import.ts"
 
 /** Bảng giá từng dịch vụ, đọc từ file Excel giá công bố; code tự tra giá thay vì để AI đọc bảng (AI hay tra nhầm dòng). */
 export const PRICE_DIR = "data/bang-gia"
@@ -101,13 +101,34 @@ export function quote(country: string, kg: number, dims: number[] | undefined, i
 export const PRICE_TAG = /\[TINH_GIA:([^\]]*)\]/g
 const money = (n: number) => `${n.toLocaleString("vi-VN")}đ`
 
-/** Đổi các thẻ [TINH_GIA: JP | 3 | 40x30x30 | hang] (mỗi kiện một thẻ) thành kết quả tính giá cho AI viết câu trả lời. */
-export function priceResult(reply: string, services = listPriceServices()) {
+// --- Phụ phí hải quan theo mặt hàng ---
+export type ItemSurcharge = { no: string; item: string; fee: string; note: string }
+/** Bảng này chỉ áp cho chuyên tuyến (NewPost xác nhận 29/10/2026); DHL, FedEx, UPS có phụ phí riêng. */
+const ITEM_SURCHARGE_SERVICES = ["CTQ", "CTU"]
+
+/** Đọc bảng "PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG" (| STT | Mặt hàng | Phụ thu | Ghi chú |) trong file kiến thức đã nạp:
+ *  nạp file mới là bảng mới có hiệu lực, không phải sửa code. */
+export function itemSurcharges(files = listKnowledgeFiles()): ItemSurcharge[] {
+  for (const f of files) {
+    const at = f.text.search(/PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG/i)
+    if (at < 0) continue
+    const section = f.text.slice(at).split(/\n#{1,2} /)[0]
+    const clean = (x: string) => x.replace(/\*\*/g, "").trim()
+    return [...section.matchAll(/^\|\s*(\d+)\s*\|([^|]+)\|([^|]+)\|([^|]*)\|/gm)]
+      .map((m) => ({ no: m[1], item: clean(m[2]), fee: clean(m[3]), note: clean(m[4]) }))
+  }
+  return []
+}
+
+/** Đổi các thẻ [TINH_GIA: JP | 3 | 40x30x30 | hang | 7] (mỗi kiện một thẻ) thành kết quả tính giá cho AI viết câu trả lời.
+ *  Ô cuối là STT mặt hàng trong bảng phụ phí hải quan theo mặt hàng (hoặc -). */
+export function priceResult(reply: string, services = listPriceServices(), surcharges = itemSurcharges()) {
   const parcels = [...reply.matchAll(PRICE_TAG)].map((m) => {
-    const [country = "", kg = "", size = "", kind = ""] = m[1].split("|").map((x) => x.trim())
+    const [country = "", kg = "", size = "", kind = "", item = ""] = m[1].split("|").map((x) => x.trim())
     const dims = size.match(/\d+(?:[.,]\d+)?/g)?.map((d) => Number(d.replace(",", ".")))
     const isDoc = /tai|tài|doc/i.test(kind)
-    return { ...quote(country, Number(kg.replace(",", ".")) || 0, dims?.length === 3 ? dims : undefined, isDoc, services), size, isDoc, kg, hasDims: dims?.length === 3 }
+    const items = (item.match(/\d+/g) ?? []).map((no) => surcharges.find((x) => x.no === no)).filter((x): x is ItemSurcharge => !!x)
+    return { ...quote(country, Number(kg.replace(",", ".")) || 0, dims?.length === 3 ? dims : undefined, isDoc, services), size, isDoc, kg, hasDims: dims?.length === 3, items }
   })
   const lines = ["", "# KẾT QUẢ TÍNH GIÁ (hệ thống tính từ bảng giá công bố – dùng ĐÚNG các con số này, KHÔNG tự tính lại)"]
   parcels.forEach((p, i) => {
@@ -115,6 +136,11 @@ export function priceResult(reply: string, services = listPriceServices()) {
     for (const q of p.quotes) lines.push(`- ${q.name}: ${money(q.price)}${q.time ? ` (thời gian ${q.time})` : ""}`)
     if (!p.quotes.length && !p.tooHeavy.length) lines.push("- Không dịch vụ nào có giá đi mã nước này.")
     if (p.tooHeavy.length) lines.push(`- Quá mức cân của bảng giá (cần nhân viên báo giá): ${p.tooHeavy.join(", ")}`)
+    const affected = p.quotes.filter((q) => ITEM_SURCHARGE_SERVICES.includes(q.code)).map((q) => q.name)
+    if (p.items.length && affected.length) {
+      lines.push(`- Phụ phí hải quan theo mặt hàng, CHỈ cộng thêm cho ${affected.join(", ")} (giá trên chưa gồm):`)
+      for (const x of p.items) lines.push(`  + ${x.item}: ${x.fee}${x.note ? ` (${x.note})` : ""}`)
+    }
   })
   if (parcels.length > 1) {
     const totals = new Map<string, number[]>()
@@ -125,6 +151,8 @@ export function priceResult(reply: string, services = listPriceServices()) {
   lines.push(
     "Cách báo: báo tối đa 3 dịch vụ rẻ nhất ở trên (khách hỏi hãng nào thì báo hãng đó), kèm thời gian nếu có; ghi rõ giá công bố tham khảo,",
     "chưa gồm phụ phí phát sinh và thuế nhập khẩu tại nước đến. Kích thước \"chưa có\" thì nói giá có thể thay đổi khi cân đo thực tế.",
+    "Có dòng phụ phí hải quan theo mặt hàng: ghi rõ mức phụ thu đó ngay cạnh giá của dịch vụ bị áp (đúng chữ và số ở trên, KHÔNG tự nhân ra tổng),",
+    "dịch vụ khác không có phụ phí này. Ghi chú \"kiểm tra từng trường hợp\" thì nói nhân viên sẽ xác nhận mức phụ thu.",
     "Không dịch vụ nào có giá hoặc quá mức cân: trả lời đúng một dòng [CHUYEN_NHAN_VIEN]. KHÔNG viết thẻ [TINH_GIA] nữa.",
   )
   return lines.join("\n")

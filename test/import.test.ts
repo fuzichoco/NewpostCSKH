@@ -114,3 +114,18 @@ test("bảng giá: mốc khoảng cân lẻ 0,5 (DHL Việt Nam) thì tính theo
   assert.equal(price(svc("VDHL", [49.5, 69.5]), 49.6), 5_000_000) // làm tròn 50 kg, khoảng 69,5
   assert.equal(price(svc("UPS", [44, 70]), 30.5), 3_100_000) // làm tròn lên 31 kg
 })
+
+test("phụ phí hải quan theo mặt hàng: đọc bảng trong file kiến thức, chỉ ghi cho chuyên tuyến CTQ/CTU", async () => {
+  const { itemSurcharges, priceResult } = await import("../src/price.ts")
+  const text = `# 06\n## 8. PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG\n| STT | Mặt hàng | Phụ thu | Ghi chú |\n|---|---|---|---|
+| 7 | Mỹ phẩm; thuốc lá | 30.000 đ/kg | **Myanmar: 50.000 đ/kg** |\n| 14 | Nước hoa | 300.000 đ/kiện | |\n\n## 9. MẪU\n| 99 | Không phải bảng | x | |`
+  const table = itemSurcharges([{ name: "06", text, updated: 0 }])
+  assert.deepEqual(table.map((x) => x.no), ["7", "14"])
+  assert.equal(table[0].note, "Myanmar: 50.000 đ/kg")
+  const goods = { zones: [{ name: "Z1", codes: ["JP"], time: "" }], rows: [{ kg: 30, perKg: false, prices: [500_000] }] }
+  const svc = (code: string) => ({ code, name: code, file: "", updated: 0, goods }) as any
+  const out = priceResult("[TINH_GIA: JP | 3 | - | hang | 7,14]", [svc("CTU"), svc("UPS")], table)
+  assert.match(out, /CHỈ cộng thêm cho CTU \(giá trên chưa gồm\):\n  \+ Mỹ phẩm; thuốc lá: 30\.000 đ\/kg \(Myanmar: 50\.000 đ\/kg\)\n  \+ Nước hoa: 300\.000 đ\/kiện/)
+  assert.doesNotMatch(priceResult("[TINH_GIA: JP | 3 | - | hang | 7]", [svc("UPS")], table), /Phụ phí hải quan/)
+  assert.doesNotMatch(priceResult("[TINH_GIA: JP | 3 | - | hang | -]", [svc("CTU")], table), /Phụ phí hải quan/)
+})
