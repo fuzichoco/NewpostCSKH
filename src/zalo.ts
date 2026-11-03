@@ -106,6 +106,21 @@ export async function userDetail(userId: string): Promise<{ name?: string; phone
 }
 
 /** Gửi tin "Yêu cầu chia sẻ thông tin": khách bấm "Chia sẻ" là Zalo gửi SĐT về qua webhook user_submit_info. */
+/** Tin tư vấn kèm nút bấm (tối đa 5 nút). Nút "oa.query.show": khách bấm thì Zalo gửi chữ payload như tin khách nhắn. */
+export async function sendButtons(userId: string, text: string, buttons: { title: string; payload: string }[]) {
+  await zaloFetch(`${API}/v3.0/oa/message/cs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", access_token: await accessToken() },
+    body: JSON.stringify({
+      recipient: { user_id: userId },
+      message: {
+        text: text.slice(0, 2000),
+        attachment: { type: "template", payload: { buttons: buttons.slice(0, 5).map((b) => ({ type: "oa.query.show", ...b })) } },
+      },
+    }),
+  })
+}
+
 export async function requestUserInfo(userId: string) {
   await zaloFetch(`${API}/v3.0/oa/message/cs`, {
     method: "POST",

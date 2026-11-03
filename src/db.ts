@@ -3,10 +3,10 @@ import { DatabaseSync } from "node:sqlite"
 
 export type Role = "user" | "bot" | "staff"
 export type Message = { id?: number; role: Role; text: string; created_at: number }
-export type User = { id: string; name: string | null; phone: string | null; paused_until: number; last_user_at: number; followed_up_at: number }
+export type User = { id: string; name: string | null; phone: string | null; paused_until: number; last_user_at: number; followed_up_at: number; region: string | null; branch: string | null }
 export type Image = { id: number; name: string; usage: string; file: string; created_at: number }
-export type Order = { id: number; user_id: string; name: string | null; phone: string | null; summary: string; created_at: number }
-export type DayCustomer = { id: string; name: string | null; phone: string | null; msgs: number; first_at: number; last_at: number; is_new: number; handover: number }
+export type Order = { id: number; user_id: string; name: string | null; phone: string | null; summary: string; created_at: number; region: string | null; branch: string | null; updated_at: number | null }
+export type DayCustomer = { id: string; name: string | null; phone: string | null; msgs: number; first_at: number; last_at: number; is_new: number; handover: number; region: string | null; branch: string | null; first_ever: number; total_msgs: number }
 export type UserRow = User & { last_text: string | null; last_role: Role | null }
 
 const path = process.env.DB_PATH ?? "data/app.db"
@@ -57,14 +57,19 @@ db.exec(`
   -- Đơn khách đã chốt qua bot (bot ghi tóm tắt để nhân viên liên hệ lấy hàng).
   CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, phone TEXT, summary TEXT NOT NULL, created_at INTEGER NOT NULL);
   CREATE INDEX IF NOT EXISTS messages_time ON messages (created_at);
+  -- Vận đơn khách đã hỏi mà chưa giao xong: bot tự tra lại định kỳ, giao thành công thì báo khách.
+  CREATE TABLE IF NOT EXISTS watches (code TEXT NOT NULL, user_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (code, user_id));
 `)
 // Cột thêm sau khi đã có dữ liệu: DB cũ chưa có thì thêm vào.
-for (const col of ["users phone TEXT", "users followed_up_at INTEGER NOT NULL DEFAULT 0", "images usage TEXT NOT NULL DEFAULT ''"]) {
+// region: vùng khách ở (bac/trung/nam); branch: bưu cục khách chọn gửi hàng (bac/nam) – thống kê chia theo chi nhánh.
+for (const col of ["users phone TEXT", "users followed_up_at INTEGER NOT NULL DEFAULT 0", "images usage TEXT NOT NULL DEFAULT ''", "users region TEXT", "users branch TEXT", "orders updated_at INTEGER"]) {
   const [table, ...def] = col.split(" ")
   try {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${def.join(" ")}`)
   } catch {} // đã có cột
 }
+// Bỏ "miền Tây" (2026-11-03): khách đã lưu miền Tây tính vào miền Nam.
+db.exec("UPDATE users SET region = 'nam' WHERE region = 'tay'")
 
 export function getKv(key: string): string | undefined {
   const row = db.prepare("SELECT value FROM kv WHERE key = ?").get(key) as { value: string } | undefined
@@ -111,13 +116,14 @@ export const IMAGE_ECHO = "[Gửi hình ảnh]"
 
 /** Tin OA gửi đi (webhook oa_send_*) có phải do hệ thống này gửi không – bot, hoặc nhân viên chat
  *  trong trang quản trị (tin tự gửi chưa có zalo_msg_id). So theo nội dung trong 5 phút gần nhất.
- *  Tin không phải chữ (ảnh, nút chia sẻ SĐT…) quay về dạng "[Gửi …]": khớp với tin "[Gửi…" bot vừa lưu. */
+ *  Tin không phải chữ (ảnh, nút chia sẻ SĐT, tin có nút bấm…) quay về dạng "[Gửi …]": khớp với tin "[Gửi…"
+ *  bot vừa lưu, hoặc bất kỳ tin bot lưu trong 1 phút vừa qua (tin có nút bấm lưu bằng câu hỏi). */
 export function isOwnEcho(userId: string, text: string, windowMs = 5 * 60_000): boolean {
   const nonText = /^\[Gửi [^\]]*\]$/.test(text) ? 1 : 0
   return !!db
     .prepare(`SELECT 1 FROM messages WHERE user_id = ? AND role IN ('bot', 'staff') AND zalo_msg_id IS NULL
-              AND (text = ? OR (? = 1 AND role = 'bot' AND text LIKE '[Gửi%')) AND created_at > ?`)
-    .get(userId, text, nonText, Date.now() - windowMs)
+              AND (text = ? OR (? = 1 AND role = 'bot' AND (text LIKE '[Gửi%' OR created_at > ?))) AND created_at > ?`)
+    .get(userId, text, nonText, Date.now() - 60_000, Date.now() - windowMs)
 }
 
 /** Bot đã lưu tin có nội dung này cho khách trong khoảng thời gian gần đây chưa. */
@@ -165,6 +171,14 @@ export function pendingUsers(sinceMs: number): string[] {
   return rows.map((r) => r.user_id)
 }
 
+export function setRegion(userId: string, region: string | null) {
+  db.prepare("UPDATE users SET region = ? WHERE id = ?").run(region, userId)
+}
+
+export function setBranch(userId: string, branch: string | null) {
+  db.prepare("UPDATE users SET branch = ? WHERE id = ?").run(branch, userId)
+}
+
 export function setPhone(userId: string, phone: string) {
   db.prepare("UPDATE users SET phone = ? WHERE id = ?").run(phone, userId)
 }
@@ -182,22 +196,63 @@ export function deleteImage(id: number) {
   db.prepare("DELETE FROM images WHERE id = ?").run(id)
 }
 
+// --- Theo dõi vận đơn ---
+export function watchCode(userId: string, code: string) {
+  db.prepare("INSERT OR IGNORE INTO watches (code, user_id, created_at) VALUES (?, ?, ?)").run(code, userId, Date.now())
+}
+
+export function unwatchCode(userId: string, code: string) {
+  db.prepare("DELETE FROM watches WHERE code = ? AND user_id = ?").run(code, userId)
+}
+
+/** Vận đơn đang theo dõi, kèm lúc khách nhắn gần nhất (Zalo chỉ cho OA nhắn trong 48 giờ sau đó). */
+export function watches(): { code: string; user_id: string; created_at: number; last_user_at: number }[] {
+  return db.prepare(`SELECT w.code, w.user_id, w.created_at,
+      COALESCE((SELECT MAX(created_at) FROM messages m WHERE m.user_id = w.user_id AND m.role = 'user'), 0) AS last_user_at
+    FROM watches w`).all() as { code: string; user_id: string; created_at: number; last_user_at: number }[]
+}
+
 // --- Đơn chốt & thống kê ---
-export function addOrder(userId: string, phone: string | null, summary: string) {
-  db.prepare("INSERT INTO orders (user_id, phone, summary, created_at) VALUES (?, ?, ?, ?)").run(userId, phone, summary, Date.now())
+export function addOrder(userId: string, phone: string | null, summary: string): number {
+  return Number(db.prepare("INSERT INTO orders (user_id, phone, summary, created_at) VALUES (?, ?, ?, ?)").run(userId, phone, summary, Date.now()).lastInsertRowid)
+}
+
+/** Khách sửa đơn đã chốt (đổi địa chỉ lấy hàng, SĐT…): thay nội dung đơn, ghi lúc sửa. */
+export function updateOrder(id: number, phone: string | null, summary: string) {
+  db.prepare("UPDATE orders SET summary = ?, phone = COALESCE(?, phone), updated_at = ? WHERE id = ?").run(summary, phone, Date.now(), id)
+}
+
+/** Đơn khách chốt gần đây (mới trước) – đưa cho AI biết để phân biệt sửa đơn cũ hay đơn mới. */
+export function recentOrders(userId: string, sinceMs: number): { id: number; summary: string; created_at: number; updated_at: number | null }[] {
+  return db
+    .prepare("SELECT id, summary, created_at, updated_at FROM orders WHERE user_id = ? AND created_at > ? ORDER BY id DESC LIMIT 5")
+    .all(userId, sinceMs) as { id: number; summary: string; created_at: number; updated_at: number | null }[]
+}
+
+export function getOrder(id: number): { id: number; user_id: string; summary: string } | undefined {
+  return db.prepare("SELECT id, user_id, summary FROM orders WHERE id = ?").get(id) as { id: number; user_id: string; summary: string } | undefined
 }
 
 export function ordersBetween(from: number, to: number): Order[] {
   return db
-    .prepare(`SELECT o.*, u.name FROM orders o LEFT JOIN users u ON u.id = o.user_id
+    .prepare(`SELECT o.*, u.name, u.region, u.branch FROM orders o LEFT JOIN users u ON u.id = o.user_id
               WHERE o.created_at >= ? AND o.created_at < ? AND o.user_id != 'test-admin' ORDER BY o.id`)
     .all(from, to) as Order[]
 }
 
 /** Khách có nhắn tin trong khoảng thời gian; is_new = lần đầu nhắn OA; handover = bot đã chuyển nhân viên. */
+/** Mọi tin (khách, bot, nhân viên) trong khoảng thời gian, cũ trước – xuất Excel thống kê. */
+export function messagesBetween(from: number, to: number): (Message & { user_id: string })[] {
+  return db
+    .prepare("SELECT id, user_id, role, text, created_at FROM messages WHERE created_at >= ? AND created_at < ? AND user_id != 'test-admin' ORDER BY id")
+    .all(from, to) as (Message & { user_id: string })[]
+}
+
 export function customersBetween(from: number, to: number, handoverText: string): DayCustomer[] {
   return db
-    .prepare(`SELECT u.id, u.name, u.phone, COUNT(*) AS msgs, MIN(m.created_at) AS first_at, MAX(m.created_at) AS last_at,
+    .prepare(`SELECT u.id, u.name, u.phone, u.region, u.branch, COUNT(*) AS msgs,
+        (SELECT MIN(created_at) FROM messages f WHERE f.user_id = u.id) AS first_ever,
+        (SELECT COUNT(*) FROM messages t WHERE t.user_id = u.id AND t.role = 'user') AS total_msgs, MIN(m.created_at) AS first_at, MAX(m.created_at) AS last_at,
         NOT EXISTS (SELECT 1 FROM messages p WHERE p.user_id = u.id AND p.created_at < ?) AS is_new,
         EXISTS (SELECT 1 FROM messages h WHERE h.user_id = u.id AND h.role = 'bot' AND h.text = ? AND h.created_at >= ? AND h.created_at < ?) AS handover
       FROM messages m JOIN users u ON u.id = m.user_id

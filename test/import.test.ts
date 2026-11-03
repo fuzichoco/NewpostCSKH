@@ -129,3 +129,50 @@ test("phụ phí hải quan theo mặt hàng: đọc bảng trong file kiến th
   assert.doesNotMatch(priceResult("[TINH_GIA: JP | 3 | - | hang | 7]", [svc("UPS")], table), /Phụ phí hải quan/)
   assert.doesNotMatch(priceResult("[TINH_GIA: JP | 3 | - | hang | -]", [svc("CTU")], table), /Phụ phí hải quan/)
 })
+
+test("câu báo giá dự phòng: 3 dịch vụ rẻ nhất, phụ thu mặt hàng chỉ ghi cho chuyên tuyến", async () => {
+  const { priceFallback } = await import("../src/price.ts")
+  const goods = (price: number) => ({ zones: [{ name: "Z1", codes: ["JP"], time: "" }], rows: [{ kg: 30, perKg: false, prices: [price] }] })
+  const svc = (code: string, price: number) => ({ code, name: code, file: "", updated: 0, goods: goods(price) }) as any
+  const items = [{ no: "7", item: "Mỹ phẩm", fee: "30.000 đ/kg", note: "" }]
+  const text = priceFallback("[TINH_GIA: JP | 5 | - | hang | 7]", [svc("UPS", 300), svc("CTU", 200), svc("FED", 400), svc("SDHL", 500)], items)
+  assert.match(text, /- CTU: 200đ \(cộng phụ thu hải quan: 30\.000 đ\/kg\)\n- UPS: 300đ\n- FED: 400đ\nGiá trên/)
+  assert.equal(priceFallback("[TINH_GIA: XX | 5 | - | hang | -]", [svc("UPS", 300)], items), "")
+})
+
+test("tra vận đơn: đọc các mốc hành trình (mới nhất trước), mã không có thì báo kiểm tra lại", async () => {
+  const { parseTracking, trackResult } = await import("../src/tracking.ts")
+  const li = (date: string, title: string, place: string, desc: string) => `<li class="timeline-item x" data-status="A">
+<div class="timeline-time"><span class="timeline-day">Thứ Hai</span><span class="timeline-date">${date}</span></div>
+<div class="timeline-content"><div class="title"> ${title} </div>${place ? `<div class="location"> ${place} </div>` : ""}<div class="desc"> ${desc} </div></div></li>`
+  const html = `<div class="shipping-info"><ul class="tf-list-items"><li><span>Nước gửi:</span> Việt Nam</li></ul></div>
+<div class="tracking-details"><ul class="timeline">${li("02-11-2026 18:43", "Đang vận chuyển", "", "Departed &amp; sent")}${li("27-10-2026 11:06", "Kết nối", "HUB HA NOI, VN", "Đã kết nối")}</ul></div>`
+  const t = parseTracking("607211381", html)!
+  assert.deepEqual(t.info, ["Nước gửi: Việt Nam"])
+  assert.deepEqual(t.events[0], { time: "02-11-2026 18:43", title: "Đang vận chuyển", place: "", desc: "Departed & sent" })
+  assert.equal(t.events[1].place, "HUB HA NOI, VN")
+  assert.equal(parseTracking("1", "Không thể lấy thông tin vận đơn. Vui lòng thử lại sau."), null)
+  const r = await trackResult("[TRA_DON: 607211381]\n[TRA_DON: 999]\n[TRA_DON: 12345]", async (code) => (code === "607211381" ? t : null))
+  assert.match(r.forAi, /Mã 607211381 \(Nước gửi: Việt Nam\): CHƯA GIAO XONG – hệ thống đã tự theo dõi mã này\n- MỚI NHẤT: 02-11-2026 18:43 \| Đang vận chuyển \| Departed & sent/)
+  assert.match(r.forAi, /Mã 12345: KHÔNG tìm thấy/)
+  assert.doesNotMatch(r.forAi, /Mã 999/) // quá ngắn, không phải mã vận đơn
+  assert.match(r.forCustomer, /^Dạ mã vận đơn 607211381: Đang vận chuyển \(cập nhật 02-11-2026 18:43\)/)
+})
+
+test("nhận vùng từ tỉnh/thành khách nói, có dấu hay không dấu", async () => {
+  const { regionFromText } = await import("../src/region.ts")
+  assert.equal(regionFromText("mình ở Nghệ An muốn gửi đồ đi Nhật"), "trung")
+  assert.equal(regionFromText("shop ở Sài Gòn"), "nam")
+  assert.equal(regionFromText("nha o can tho"), "nam") // miền Tây tính vào miền Nam
+  assert.equal(regionFromText("Hà Nội ạ"), "bac")
+  assert.equal(regionFromText("tôi ở Hà Nam"), "bac") // "Nam" trong tên tỉnh không phải miền Nam
+  assert.equal(regionFromText("Đà Lạt, Lâm Đồng"), "trung")
+  assert.equal(regionFromText("gửi 3kg đi Mỹ"), null)
+  assert.equal(regionFromText("hàng ở Hà Nội nhưng người gửi ở Cần Thơ"), null) // nhắc 2 vùng thì không đoán
+})
+
+test("khách gõ chữ miền: miền Tây tính miền Nam", async () => {
+  const { regionFromText } = await import("../src/region.ts")
+  assert.equal(regionFromText("tôi ở miền Tây"), "nam")
+  assert.equal(regionFromText("bên mình miền trung"), "trung")
+})

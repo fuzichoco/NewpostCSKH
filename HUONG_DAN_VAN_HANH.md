@@ -24,7 +24,9 @@ Máy đã cài sẵn (laptop đang dùng): chỉ cần 4 bước, khoảng 3 ph�
 ## 2. Trang quản trị
 
 - Địa chỉ: link **Trang quản trị** trong cửa sổ đen (dạng `https://....trycloudflare.com/admin`). Trên chính máy chạy có thể dùng http://localhost:3000/admin.
-- Mật khẩu: giá trị `ADMIN_PASSWORD` trong file `.env`.
+- Mật khẩu nhân viên: giá trị `ADMIN_PASSWORD` trong file `.env`. Mật khẩu quản lý: `MANAGER_PASSWORD` – chỉ đăng nhập bằng mật khẩu này mới thấy và vào được *Kiến thức & giọng văn*, *Ảnh gửi khách*, *Model AI*.
+
+**Vùng và chi nhánh:** khi khách có nhu cầu gửi hàng mà chưa biết khách ở đâu, bot gửi tin có nút để khách chọn vùng (Bắc / Trung / Nam; các tỉnh miền Tây tính vào miền Nam), rồi chọn bưu cục gửi hàng (miền Bắc – Hà Nội hoặc miền Nam – TP.HCM). Khách nói tỉnh/thành mình ở (ví dụ "mình ở Nghệ An") thì hệ thống tự ghi vùng, không hỏi lại. Nhân viên sửa tay được ở đầu trang hội thoại. Trang *Thống kê* chia theo bưu cục khách chọn (chi nhánh miền Bắc, miền Nam, khách chưa chọn); nút *Tải Excel* ra file .xlsx 4 trang tính: Tổng quan, Khách hàng (đầy đủ thông tin, khách hỏi gì, trả lời cuối, link hội thoại), Đơn đã chốt (tách cột nước đến, hàng, cân nặng, giá…), Tin nhắn trong ngày.
 
 | Mục | Dùng để |
 |---|---|
@@ -45,9 +47,11 @@ Sau khi bot chuyển, nếu **10 phút** không có nhân viên trả lời thì
 **Giờ trả lời và thời gian chờ:** đầu trang *Hội thoại*, chọn *Bot trả lời từ … đến …* (để trống là cả ngày) và *Chờ khách nhắn xong … giây* → *Lưu*.
 Ngoài giờ bot im; tới giờ mở bot trả lời các tin khách nhắn trong 12 giờ qua. Tin hỏi thăm 2 giờ cũng chỉ gửi trong giờ trả lời.
 
-**Báo nhân viên khi có khách nhắn:** trang *Hội thoại* → *Thông báo cho nhân viên*. Báo khi khách nhắn và khi bot chuyển nhân viên; mỗi khách chỉ báo 1 lần mỗi ngày cho mỗi loại.
+**Báo nhân viên (chỉ quản lý cài được):** trang *Hội thoại* → *Cài đặt bot*. Có 2 loại thông báo: khách nhắn OA (mỗi khách 1 lần mỗi ngày, kèm link xem hội thoại) và đơn hàng (đơn mới, khách sửa đơn, khách đổi bưu cục – mỗi lần đều báo, ghi rõ tên, SĐT, bưu cục, nước đến, hàng, cân nặng, giá, nơi lấy hàng). Khách đã chọn bưu cục thì chỉ báo nhân viên chi nhánh đó.
 - Nhóm Telegram: tạo bot bằng @BotFather, thêm bot vào nhóm, nhắn 1 tin trong nhóm, dán token → *Lưu và gửi thử*.
 - Zalo cá nhân: nhân viên quan tâm OA và nhắn OA 1 tin → mở hội thoại của nhân viên → *Nhận thông báo*. Zalo chỉ cho OA nhắn trong 48 giờ kể từ tin cuối của nhân viên, nên nhân viên nhắn OA ít nhất 2 ngày 1 lần.
+
+**Tra và theo dõi vận đơn:** khách hỏi mã vận đơn thì bot tự tra trên trang tra cứu NewPost và báo hành trình hiện tại. Đơn chưa giao xong thì bot báo khách "em sẽ tự nhắn khi giao thành công" và cứ 30 phút tra lại (24/24); thấy *Đã giao thành công* là nhắn khách 1 tin rồi thôi theo dõi. Theo dõi tối đa 30 ngày; Zalo chỉ cho OA nhắn trong 48 giờ sau tin cuối của khách, quá hạn thì bot chờ khách nhắn lại mới báo được.
 
 Khi cần số điện thoại (chốt đơn, hẹn gọi lại), bot gửi kèm nút **Chia sẻ số điện thoại**: khách bấm là số tự lưu vào hệ thống, không phải gõ. Zalo không cho lấy số điện thoại nếu khách chưa đồng ý chia sẻ.
 

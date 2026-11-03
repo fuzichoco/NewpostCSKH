@@ -8,6 +8,7 @@ import * as ai from "./ai.ts"
 import * as bot from "./bot.ts"
 import * as db from "./db.ts"
 import * as notify from "./notify.ts"
+import { isBranch, isRegion } from "./region.ts"
 import { deleteKnowledgeFile, fileToText, listKnowledgeFiles, saveKnowledgeFile } from "./import.ts"
 import { deletePriceService, listPriceServices, parsePriceWorkbook, savePriceService } from "./price.ts"
 import * as views from "./views.ts"
@@ -57,9 +58,14 @@ function aiView(flash: string, error: string) {
   return views.aiPage({ cfg: ai.currentConfig(), keys, flash, error })
 }
 
+/** Trang trả cho nhân viên thường (không phải quản lý): bỏ link tới các trang chỉ quản lý được vào. */
+const staffResponses = new WeakSet<ServerResponse>()
+
 function send(res: ServerResponse, status: number, body: string, type = "text/html; charset=utf-8") {
-  res.writeHead(status, { "Content-Type": type })
-  res.end(body)
+  // Trang quản trị luôn lấy bản mới (bấm quay lại cũng thấy dữ liệu mới nhất, không cần tải lại).
+  res.writeHead(status, { "Content-Type": type, ...(type.startsWith("text/html") ? { "Cache-Control": "no-store" } : {}) })
+  // Nhân viên thường: bỏ link trang quản lý và các khối đánh dấu <!--manager-->…<!--/manager--> (Cài đặt bot, Nhận thông báo).
+  res.end(staffResponses.has(res) ? body.replace(/<a data-manager [^>]*>[^<]*<\/a>/g, "").replace(/<!--manager-->[\s\S]*?<!--\/manager-->/g, "") : body)
 }
 
 function redirect(res: ServerResponse, to: string) {
@@ -71,15 +77,25 @@ const sha = (s: string) => createHash("sha256").update(s).digest()
 const safeEqual = (a: string, b: string) => timingSafeEqual(sha(a), sha(b))
 
 // --- Đăng nhập: cookie "sid" = "<hạn dùng>.<chữ ký>", không cần lưu phiên ở server. ---
-// Khóa ký lấy từ mật khẩu: đổi ADMIN_PASSWORD là mọi phiên cũ tự hết hiệu lực.
+// Khóa ký lấy từ mật khẩu: đổi ADMIN_PASSWORD / MANAGER_PASSWORD là mọi phiên cũ tự hết hiệu lực.
 const SESSION_MS = 7 * 24 * 3_600_000
-const sign = (exp: string) => createHmac("sha256", `session:${env.ADMIN_PASSWORD}:${env.ZALO_APP_SECRET ?? ""}`).update(exp).digest("hex")
+const sign = (data: string) =>
+  createHmac("sha256", `session:${env.ADMIN_PASSWORD}:${env.MANAGER_PASSWORD ?? ""}:${env.ZALO_APP_SECRET ?? ""}`).update(data).digest("hex")
 
-function isLoggedIn(req: IncomingMessage): boolean {
+// Hai loại tài khoản: nhân viên (ADMIN_PASSWORD) và quản lý (MANAGER_PASSWORD) – quản lý mới vào được
+// Kiến thức & giọng văn, Ảnh gửi khách, Model AI. Phiên lưu trong cookie "hạn.vai.chữ ký".
+type Role = "staff" | "manager"
+// Cài đặt bot (giờ trả lời, thông báo nhân viên) cũng chỉ quản lý được đổi.
+const MANAGER_PATHS = ["/admin/settings", "/admin/knowledge", "/admin/price", "/admin/images", "/admin/ai", "/admin/hours", "/admin/notify"]
+
+function sessionRole(req: IncomingMessage): Role | null {
   const sid = /(?:^|;\s*)sid=([^;]+)/.exec(req.headers.cookie ?? "")?.[1] ?? ""
-  const [exp, mac] = sid.split(".")
-  return !!env.ADMIN_PASSWORD && !!exp && !!mac && Number(exp) > Date.now() && safeEqual(mac, sign(exp))
+  const [exp, role, mac] = sid.split(".")
+  if (!env.ADMIN_PASSWORD || !exp || !mac || Number(exp) <= Date.now() || (role !== "staff" && role !== "manager")) return null
+  return safeEqual(mac, sign(`${exp}.${role}`)) ? role : null
 }
+
+const isLoggedIn = (req: IncomingMessage) => sessionRole(req) !== null
 
 function setSession(req: IncomingMessage, res: ServerResponse, value: string, maxAgeSec: number) {
   const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : ""
@@ -121,13 +137,17 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, url: URL) 
   if (recentFails(ip).length >= 5) {
     return send(res, 429, views.loginPage(next, "Nhập sai quá nhiều lần. Thử lại sau 15 phút."))
   }
-  if (!safeEqual(form.get("password") ?? "", env.ADMIN_PASSWORD)) {
+  const password = form.get("password") ?? ""
+  const role: Role | null = env.MANAGER_PASSWORD && safeEqual(password, env.MANAGER_PASSWORD) ? "manager"
+    : safeEqual(password, env.ADMIN_PASSWORD) ? "staff"
+    : null
+  if (!role) {
     recentFails(ip).push(Date.now())
     return send(res, 401, views.loginPage(next, "Mật khẩu chưa đúng."))
   }
   failedLogins.delete(ip)
   const exp = String(Date.now() + SESSION_MS)
-  setSession(req, res, `${exp}.${sign(exp)}`, SESSION_MS / 1000)
+  setSession(req, res, `${exp}.${role}.${sign(`${exp}.${role}`)}`, SESSION_MS / 1000)
   redirect(res, next)
 }
 
@@ -234,15 +254,22 @@ function dayRange(date: string | null) {
 
 function statsData(date: string | null) {
   const { day, from, to } = dayRange(date)
-  return { day, customers: db.customersBetween(from, to, bot.HANDOVER_REPLY), orders: db.ordersBetween(from, to) }
+  return { day, customers: db.customersBetween(from, to, bot.HANDOVER_REPLY), orders: db.ordersBetween(from, to), messages: db.messagesBetween(from, to) }
 }
 
 const dashBack = (res: ServerResponse, msg: string) => redirect(res, `/admin?msg=${encodeURIComponent(msg)}`)
 
 async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) {
-  if (!isLoggedIn(req)) {
+  const role = sessionRole(req)
+  if (!role) {
     if (req.method === "GET") return redirect(res, `/login?next=${encodeURIComponent(url.pathname + url.search)}`)
     return send(res, 401, "Phiên đăng nhập đã hết, hãy đăng nhập lại", "text/plain; charset=utf-8")
+  }
+  if (role === "staff") {
+    staffResponses.add(res)
+    if (MANAGER_PATHS.some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`))) {
+      return send(res, 403, views.errorPage("Trang này chỉ dành cho quản lý. Đăng xuất rồi đăng nhập bằng mật khẩu quản lý."))
+    }
   }
 
   let form = new URLSearchParams()
@@ -262,13 +289,14 @@ async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) 
       return send(res, 200, views.dashboard({
         users: db.listUsers().filter((u) => u.id !== TEST_USER),
         botEnabled: db.getKv("bot_enabled") !== "0",
+        handoverEnabled: db.getKv("handover_enabled") !== "0",
         zaloConnected: !!db.getKv("refresh_token"),
         tokenExpires: Number(db.getKv("expires_at") ?? 0),
         replyFrom: db.getKv("reply_from") ?? "",
         replyTo: db.getKv("reply_to") ?? "",
         debounce: Number(db.getKv("debounce_seconds") ?? bot.DEBOUNCE_DEFAULT),
         inHours: bot.inReplyHours(),
-        staff: notify.staffIds().map((sid) => ({ id: sid, name: db.getUser(sid)?.name ?? null })),
+        staff: notify.staffList().map((st) => ({ id: st.id, name: db.getUser(st.id)?.name ?? null, branch: st.branch })),
         telegram: { hasToken: !!db.getKv("tg_token"), chat: db.getKv("tg_chat") ?? "" },
         flash: url.searchParams.get("msg") ?? "",
       }))
@@ -308,17 +336,43 @@ async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) 
         return dashBack(res, e instanceof Error ? e.message : String(e))
       }
     }
+    case "POST /admin/notify/staff-branch": {
+      const b = form.get("branch")
+      notify.setStaff(id, true, b === "bac" || b === "nam" ? b : "all")
+      return dashBack(res, `Đã lưu chi nhánh nhận thông báo cho ${db.getUser(id)?.name ?? "nhân viên"}.`)
+    }
     case "POST /admin/notify/staff":
-      notify.setStaff(id, form.get("on") === "1")
+      notify.setStaff(id, form.get("on") === "1", notify.staffList().find((st) => st.id === id)?.branch)
       return form.get("back") === "u" ? redirect(res, `/admin/u?id=${encodeURIComponent(id)}#latest`) : dashBack(res, form.get("on") === "1" ? "Đã thêm nhân viên nhận thông báo." : "Đã gỡ nhân viên khỏi danh sách nhận thông báo.")
     case "POST /admin/toggle":
       db.setKv("bot_enabled", db.getKv("bot_enabled") === "0" ? "1" : "0")
       return redirect(res, "/admin")
+    case "POST /admin/handover-toggle":
+      db.setKv("handover_enabled", db.getKv("handover_enabled") === "0" ? "1" : "0")
+      return redirect(res, "/admin")
     case "GET /admin/u":
-      return send(res, 200, views.conversation(db.getUser(id), id, db.history(id, 200), url.searchParams.get("err") ?? "", notify.staffIds().includes(id)))
+      return send(res, 200, views.conversation(db.getUser(id), id, db.history(id, 200), url.searchParams.get("err") ?? "", notify.staffIds().includes(id),
+        db.watches().filter((w) => w.user_id === id).map((w) => w.code)))
     case "POST /admin/u/bot":
       db.pauseBot(id, form.get("action") === "pause" ? bot.STAFF_MODE_MINUTES : 0)
       return redirect(res, `/admin/u?id=${encodeURIComponent(id)}#latest`)
+    case "POST /admin/u/region": {
+      const r = form.get("region"), b = form.get("branch")
+      db.setRegion(id, isRegion(r) ? r : null)
+      db.setBranch(id, isBranch(b) ? b : null)
+      return redirect(res, `/admin/u?id=${encodeURIComponent(id)}#latest`)
+    }
+    case "POST /admin/u/track": {
+      let err = ""
+      try {
+        const { missing } = await bot.sendTracking(id, form.get("code") ?? "")
+        if (missing.length) err = `không tìm thấy mã ${missing.join(", ")} (các mã còn lại đã gửi khách)`
+      } catch (e) {
+        console.error(`Gửi mã vận đơn cho ${id} lỗi:`, e)
+        err = e instanceof Error ? e.message : "Gửi mã vận đơn thất bại"
+      }
+      return redirect(res, `/admin/u?id=${encodeURIComponent(id)}${err ? `&err=${encodeURIComponent(err)}` : ""}#latest`)
+    }
     case "POST /admin/u/send": {
       const text = form.get("text")?.trim()
       let err = ""
@@ -461,13 +515,13 @@ async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) 
     }
     case "GET /admin/stats":
       return send(res, 200, views.statsPage(statsData(url.searchParams.get("date"))))
-    case "GET /admin/stats.csv": {
+    case "GET /admin/stats.xlsx": {
       const s = statsData(url.searchParams.get("date"))
       res.writeHead(200, {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="khach-hang-${s.day}.csv"`,
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="thong-ke-khach-hang-${s.day}.xlsx"`,
       })
-      return res.end(views.statsCsv(s))
+      return res.end(views.statsXlsx(s, env.PUBLIC_URL ?? ""))
     }
     case "GET /admin/ai":
       return send(res, 200, aiView(url.searchParams.get("msg") ?? "", ""))

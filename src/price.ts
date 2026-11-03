@@ -123,14 +123,14 @@ export function itemSurcharges(files = listKnowledgeFiles()): ItemSurcharge[] {
 /** Đổi các thẻ [TINH_GIA: JP | 3 | 40x30x30 | hang | 7] (mỗi kiện một thẻ) thành kết quả tính giá cho AI viết câu trả lời.
  *  Ô cuối là STT mặt hàng trong bảng phụ phí hải quan theo mặt hàng (hoặc -). */
 export function priceResult(reply: string, services = listPriceServices(), surcharges = itemSurcharges()) {
-  const parcels = [...reply.matchAll(PRICE_TAG)].map((m) => {
-    const [country = "", kg = "", size = "", kind = "", item = ""] = m[1].split("|").map((x) => x.trim())
-    const dims = size.match(/\d+(?:[.,]\d+)?/g)?.map((d) => Number(d.replace(",", ".")))
-    const isDoc = /tai|tài|doc/i.test(kind)
-    const items = (item.match(/\d+/g) ?? []).map((no) => surcharges.find((x) => x.no === no)).filter((x): x is ItemSurcharge => !!x)
-    return { ...quote(country, Number(kg.replace(",", ".")) || 0, dims?.length === 3 ? dims : undefined, isDoc, services), size, isDoc, kg, hasDims: dims?.length === 3, items }
-  })
-  const lines = ["", "# KẾT QUẢ TÍNH GIÁ (hệ thống tính từ bảng giá công bố – dùng ĐÚNG các con số này, KHÔNG tự tính lại)"]
+  const parcels = parseParcels(reply, services, surcharges)
+  // Model rẻ hay lặp lại thẻ TINH_GIA thay vì viết câu báo giá: nói rõ bước tính đã xong.
+  const lines = [
+    "",
+    "# BƯỚC TÍNH GIÁ ĐÃ XONG",
+    "Hệ thống đã tính giá cho tin nhắn cuối của khách (kết quả bên dưới). Bây giờ CHỈ viết câu báo giá gửi khách bằng lời. TUYỆT ĐỐI KHÔNG viết thẻ [TINH_GIA].",
+    "# KẾT QUẢ TÍNH GIÁ (hệ thống tính từ bảng giá công bố – dùng ĐÚNG các con số này, KHÔNG tự tính lại)",
+  ]
   parcels.forEach((p, i) => {
     lines.push(`Kiện ${i + 1}: mã nước ${p.country}, ${p.isDoc ? "tài liệu" : "hàng hóa"}, cân thực ${p.kg} kg, kích thước ${p.hasDims ? p.size : "chưa có"}, trọng lượng tính cước ${String(p.weight).replace(".", ",")} kg.`)
     for (const q of p.quotes) lines.push(`- ${q.name}: ${money(q.price)}${q.time ? ` (thời gian ${q.time})` : ""}`)
@@ -156,4 +156,31 @@ export function priceResult(reply: string, services = listPriceServices(), surch
     "Không dịch vụ nào có giá hoặc quá mức cân: trả lời đúng một dòng [CHUYEN_NHAN_VIEN]. KHÔNG viết thẻ [TINH_GIA] nữa.",
   )
   return lines.join("\n")
+}
+
+/** Câu báo giá code tự viết (3 dịch vụ rẻ nhất mỗi kiện) khi AI không viết được câu trả lời sau khi đã tính giá.
+ *  Không kiện nào có giá thì trả về "". */
+export function priceFallback(reply: string, services = listPriceServices(), surcharges = itemSurcharges()) {
+  const parcels = parseParcels(reply, services, surcharges).filter((p) => p.quotes.length)
+  if (!parcels.length) return ""
+  const lines: string[] = []
+  parcels.forEach((p, i) => {
+    lines.push(`${parcels.length > 1 ? `Kiện ${i + 1}: ` : "Dạ "}hàng đi mã nước ${p.country}, trọng lượng tính cước ${String(p.weight).replace(".", ",")} kg:`)
+    for (const q of p.quotes.slice(0, 3)) {
+      const extra = p.items.length && ITEM_SURCHARGE_SERVICES.includes(q.code) ? ` (cộng phụ thu hải quan: ${p.items.map((x) => x.fee).join("; ")})` : ""
+      lines.push(`- ${q.name}: ${money(q.price)}${q.time ? `, thời gian ${q.time}` : ""}${extra}`)
+    }
+  })
+  lines.push("Giá trên là cước theo bảng giá công bố, chưa gồm phụ phí xăng dầu, VAT và thuế nhập khẩu tại nước đến. Nhân viên sẽ báo tổng chi phí chính xác khi cân đo thực tế ạ.")
+  return lines.join("\n")
+}
+
+function parseParcels(reply: string, services: PriceService[], surcharges: ItemSurcharge[]) {
+  return [...reply.matchAll(PRICE_TAG)].map((m) => {
+    const [country = "", kg = "", size = "", kind = "", item = ""] = m[1].split("|").map((x) => x.trim())
+    const dims = size.match(/\d+(?:[.,]\d+)?/g)?.map((d) => Number(d.replace(",", ".")))
+    const isDoc = /tai|tài|doc/i.test(kind)
+    const items = (item.match(/\d+/g) ?? []).map((no) => surcharges.find((x) => x.no === no)).filter((x): x is ItemSurcharge => !!x)
+    return { ...quote(country, Number(kg.replace(",", ".")) || 0, dims?.length === 3 ? dims : undefined, isDoc, services), size, isDoc, kg, hasDims: dims?.length === 3, items }
+  })
 }

@@ -3,6 +3,8 @@ import { ENABLED as ZNS_ENABLED, TAG_LABEL, type Template } from "./zns.ts"
 import { PROVIDERS, type AiConfig, type Provider } from "./ai.ts"
 import { KNOWLEDGE_EXT, type KnowledgeFile } from "./import.ts"
 import type { PriceService } from "./price.ts"
+import { BRANCHES, isBranch, isRegion, REGIONS } from "./region.ts"
+import { xlsx } from "./xlsx.ts"
 
 export const esc = (s: unknown) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!)
@@ -116,6 +118,8 @@ code{background:var(--bot);padding:1px 5px;border-radius:4px;font-size:13px}
 .msg.failed .meta{color:var(--signal)}
 .composer{position:sticky;bottom:0;background:var(--paper);padding:12px 0 16px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
 .composer .row-actions{display:flex;flex-direction:column;gap:8px}
+.track-box{padding:10px 0 0;border-top:1px solid var(--line)}
+.track-box textarea{width:18em;max-width:100%;min-height:0;resize:vertical}
 textarea{width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);resize:vertical}
 textarea:focus{border-color:var(--focus)}
 .editor{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:24px}
@@ -136,7 +140,7 @@ textarea:focus{border-color:var(--focus)}
 .follow label{font-weight:600;display:block}
 .follow p{margin:2px 0 8px;color:var(--muted);font-size:14px}
 .sent-img{display:block;margin-top:6px;max-width:240px;max-height:240px;border-radius:8px;border:1px solid var(--line)}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:32px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
 .tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
 .tile b{display:block;font-size:26px;line-height:1.2;font-variant-numeric:tabular-nums}
 .tile span{color:var(--muted);font-size:14px}
@@ -164,11 +168,71 @@ textarea:focus{border-color:var(--focus)}
 .login-form input{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
 .login-form input:focus{border-color:var(--focus)}
 .login-form .btn{margin-top:12px;padding:11px 14px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.btn{display:inline-flex;align-items:center;gap:6px;transition:background .15s,border-color .15s,color .15s}
+.btn.sm{font-size:14px;padding:7px 12px;min-height:38px}
+.btn.icon{padding:7px 9px}
+.switches{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:16px}
+.sw{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.sw.off{background:#FDF5F4;border-color:#F1C9C4}
+.sw form{margin:0}
+.sw-title{display:block;font-size:13px;color:var(--muted)}
+.sw-state{display:block;font-weight:600}
+.sw.off .sw-state{color:var(--signal)}
+.settings-box{background:var(--surface);border:1px solid var(--line);border-radius:10px;margin-bottom:24px}
+.settings-box>summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:12px 14px;cursor:pointer;list-style:none}
+.settings-box>summary::-webkit-details-marker{display:none}
+.settings-box>summary::after{content:"Mở";margin-left:auto;font-size:13px;color:var(--focus);font-weight:600}
+.settings-box[open]>summary::after{content:"Đóng"}
+.settings-box>summary .muted{font-size:14px}
+.settings-body{display:grid;gap:20px;padding:4px 14px 16px;border-top:1px solid var(--line)}
+.settings-body h3{font-size:15px;margin:14px 0 6px}
+.settings-body .hint{margin-top:6px}
+.toolbar{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.search{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:0 12px;color:var(--muted)}
+.search:focus-within{border-color:var(--focus);box-shadow:0 0 0 3px rgba(43,108,223,.15)}
+.search input{flex:1;border:0;outline:0;background:transparent;font:inherit;font-size:16px;padding:11px 0;color:var(--ink);min-width:0}
+.filters{display:flex;flex-wrap:wrap;gap:8px}
+.fchip{font:inherit;font-size:14px;font-weight:600;padding:7px 12px;min-height:38px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.fchip b{font-weight:700;color:var(--muted);margin-left:2px;font-variant-numeric:tabular-nums}
+.fchip:hover{border-color:var(--muted)}
+.fchip[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.fchip[aria-pressed=true] b{color:var(--tape)}
+.fchip.warn:not([aria-pressed=true]){background:var(--tape-soft);border-color:var(--tape)}
+.row-main{min-width:0;display:flex;flex-direction:column;gap:2px}
+.phone{font-weight:400;color:var(--muted);font-size:14px;margin-left:6px;font-variant-numeric:tabular-nums}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600;line-height:1.6;background:var(--bot);color:var(--ink);white-space:nowrap}
+.chip.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.chip.warn{background:var(--tape);color:var(--ink)}
+.chip.ok{background:#DDF1E5;color:var(--ok)}
+.list li[hidden]{display:none}
+.waiting .row{background:#FFFBEA}
+.staff-box>summary{cursor:pointer;margin-bottom:10px}
+.daynav{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.daynav input{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);min-height:38px}
+.tiles .tile{display:flex;flex-direction:column;gap:2px}
+.tile small{color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
+.table-wrap.flat{border:0}
+.compare th[scope=row]{color:var(--ink);font-weight:600;white-space:nowrap}
+.compare td{min-width:150px}
+.bar-cell{display:flex;align-items:center;gap:8px}
+.bar{display:inline-block;height:10px;border-radius:5px;background:var(--ink);min-width:2px}
+.bar.nam{background:var(--focus)}
+.bar.none{background:var(--line)}
+.bar-cell b{font-variant-numeric:tabular-nums}
+.jobs .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.jobs .small{font-size:13px;color:var(--muted)}
+.jobs tr[hidden]{display:none}
+.tabs{margin:0 0 16px}
+@media (prefers-reduced-motion:reduce){.btn,.fchip{transition:none}}
 @media (max-width:760px){
 .login{grid-template-columns:1fr;grid-template-rows:auto 1fr}
 .login-brand{padding:20px 16px;gap:16px}
 .logout{margin:0 0 0 auto}
-.shell{grid-template-columns:1fr}
+.shell{grid-template-columns:minmax(0,1fr)}
+.compare td{min-width:110px}
+.head{flex-direction:column}
 .side{flex-direction:row;align-items:center;padding:10px 16px;gap:16px;overflow-x:auto;position:static;height:auto}
 .brand span{display:none}
 .nav{flex-direction:row}
@@ -191,18 +255,46 @@ const NAV: [Page, string, string][] = [
   ["ai", "/admin/ai", "Model AI"],
 ]
 
+const MANAGER_PAGES: Page[] = ["settings", "images", "ai"]
+
 const head = (title: string) => `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} – Newpost CSKH</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700&display=swap" rel="stylesheet">
 <style>${CSS}</style></head>`
 
+/** Form có data-live: gửi ngầm rồi thay phần trang (mặc định cả main, hoặc vùng ghi trong data-live) bằng bản mới,
+ *  giữ vị trí cuộn và khung đang mở – không tải lại trang, không nhảy lên đầu. Lỗi thì gửi form kiểu thường. */
+const LIVE_FORMS = `<script>(() => {
+  document.addEventListener("submit", async (e) => {
+    const f = e.target
+    if (!(f instanceof HTMLFormElement) || !f.hasAttribute("data-live")) return
+    e.preventDefault()
+    const sel = f.dataset.live || "main.main", body = new URLSearchParams(new FormData(f, e.submitter))
+    for (const b of f.querySelectorAll("button,select")) b.disabled = true
+    try {
+      const res = await fetch(f.action, { method: "POST", body })
+      const doc = new DOMParser().parseFromString(await res.text(), "text/html")
+      const fresh = doc.querySelector(sel), old = document.querySelector(sel)
+      if (!res.ok || !fresh || !old) return location.reload()
+      const open = [...old.querySelectorAll("details")].map((d) => d.open), y = scrollY
+      old.replaceChildren(...fresh.childNodes)
+      old.querySelectorAll("details").forEach((d, i) => { if (open[i]) d.open = true })
+      for (const s of old.querySelectorAll("script")) { const n = document.createElement("script"); n.textContent = s.textContent; s.replaceWith(n) }
+      scrollTo(0, y)
+    } catch { f.submit() }
+  })
+})()</script>`
+
 function layout(title: string, active: Page | null, body: string) {
-  const nav = NAV.filter(([key]) => key !== "zns" || ZNS_ENABLED).map(([key, href, label]) => `<a href="${href}"${key === active ? ' aria-current="page"' : ""}>${label}</a>`).join("")
+  // Trang chỉ quản lý được vào: đánh dấu data-manager, server bỏ các link này khi nhân viên thường đăng nhập.
+  const nav = NAV.filter(([key]) => key !== "zns" || ZNS_ENABLED)
+    .map(([key, href, label]) => `<a ${MANAGER_PAGES.includes(key) ? "data-manager " : ""}href="${href}"${key === active ? ' aria-current="page"' : ""}>${label}</a>`)
+    .join("")
   return `${head(title)}<body><div class="shell">
 <aside class="side"><div class="brand">Newpost Global<span>Chăm sóc khách hàng Zalo</span></div><nav class="nav">${nav}</nav>
 <form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></aside>
-<main class="main">${body}<span id="latest"></span></main></div></body></html>`
+<main class="main">${body}<span id="latest"></span></main></div>${LIVE_FORMS}</body></html>`
 }
 
 const ROLE_LABEL = { user: "Khách", bot: "Bot", staff: "Nhân viên" }
@@ -294,81 +386,149 @@ f.onsubmit = async (e) => {
 }
 })()</script>`
 
+const ICON = {
+  search: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  chevL: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>',
+  chevR: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>',
+  download: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+}
+
+/** Nhãn bưu cục ngắn cho danh sách. */
+const branchShort = (b: string | null) => (b === "bac" ? "Bưu cục Bắc" : b === "nam" ? "Bưu cục Nam" : "")
+
 function userRow(u: UserRow) {
   const prefix = u.last_role === "bot" ? "Bot: " : u.last_role === "staff" ? "Nhân viên: " : ""
-  return `<li class="${isPaused(u) ? "waiting" : ""}"><a class="row" href="/admin/u?id=${encodeURIComponent(u.id)}#latest">
+  const waiting = isPaused(u)
+  const chips = [
+    waiting ? '<span class="chip warn">Chờ nhân viên</span>' : "",
+    isBranch(u.branch) ? `<span class="chip">${esc(branchShort(u.branch))}</span>` : "",
+    isRegion(u.region) ? `<span class="chip ghost">${esc(REGIONS[u.region])}</span>` : "",
+  ].join("")
+  // data-*: để ô tìm kiếm và nút lọc trên trang lọc ngay trên trình duyệt, không tải lại trang.
+  const search = [displayName(u), u.phone ? phoneView(u.phone) : "", u.last_text ?? ""].join(" ").toLowerCase()
+  return `<li class="${waiting ? "waiting" : ""}" data-state="${waiting ? "waiting" : "bot"}" data-branch="${isBranch(u.branch) ? u.branch : "none"}" data-search="${esc(search)}">
+<a class="row" href="/admin/u?id=${encodeURIComponent(u.id)}#latest">
 <span class="avatar" aria-hidden="true">${esc(initial(u))}</span>
-<span><span class="who">${esc(displayName(u))}</span><span class="preview">${esc(prefix + (u.last_text ?? ""))}</span></span>
+<span class="row-main"><span class="who">${esc(displayName(u))}${u.phone ? ` <span class="phone">${esc(phoneView(u.phone))}</span>` : ""}</span>
+<span class="preview">${esc(prefix + (u.last_text ?? ""))}</span>${chips ? `<span class="chips">${chips}</span>` : ""}</span>
 <span class="when">${shortTime(u.last_user_at)}</span></a></li>`
 }
 
+/** Nút lọc + ô tìm kiếm cho danh sách có data-state / data-branch / data-search. */
+const LIST_FILTER = `<script>(() => {
+  const box = document.getElementById("q"), list = document.getElementById("inbox"), empty = document.getElementById("no-match")
+  let filter = "all"
+  const apply = () => {
+    const q = box.value.trim().toLowerCase()
+    let shown = 0
+    for (const li of list.children) {
+      const ok = (filter === "all" || li.dataset.state === filter || li.dataset.branch === filter) && (!q || li.dataset.search.includes(q))
+      li.hidden = !ok
+      if (ok) shown++
+    }
+    empty.hidden = shown > 0
+  }
+  box.addEventListener("input", apply)
+  for (const b of document.querySelectorAll("[data-filter]")) b.addEventListener("click", () => {
+    filter = b.dataset.filter
+    for (const x of document.querySelectorAll("[data-filter]")) x.setAttribute("aria-pressed", String(x === b))
+    apply()
+  })
+})()</script>`
+
 export function dashboard(p: {
-  users: UserRow[]; botEnabled: boolean; zaloConnected: boolean; tokenExpires: number
+  users: UserRow[]; botEnabled: boolean; handoverEnabled: boolean; zaloConnected: boolean; tokenExpires: number
   replyFrom: string; replyTo: string; debounce: number; inHours: boolean
-  staff: { id: string; name: string | null }[]; telegram: { hasToken: boolean; chat: string }; flash: string
+  staff: { id: string; name: string | null; branch?: string }[]; telegram: { hasToken: boolean; chat: string }; flash: string
 }) {
   // Nhân viên nhận thông báo cũng nhắn OA: xếp mục riêng, không lẫn vào khách.
   const staffSet = new Set(p.staff.map((s) => s.id))
   const staffRows = p.users.filter((u) => staffSet.has(u.id))
   const customers = p.users.filter((u) => !staffSet.has(u.id))
-  const waiting = customers.filter(isPaused)
-  const others = customers.filter((u) => !isPaused(u))
-  const zalo = p.zaloConnected
-    ? `<span title="Token tự làm mới, hết hạn ${esc(fullTime(p.tokenExpires))}"><span class="dot"></span>Đã kết nối Zalo OA</span>
-       <a class="muted" href="/admin/zalo/connect">Kết nối lại</a>`
-    : `<span class="off-text"><span class="dot off"></span>Chưa kết nối Zalo OA</span> <a class="btn" href="/admin/zalo/connect">Kết nối Zalo OA</a>`
-  const bot = p.botEnabled
-    ? `<span><span class="dot"></span>Bot đang tự trả lời khách</span><button class="btn ghost">Tắt bot</button>`
-    : `<span class="off-text"><span class="dot off"></span>Bot đang tắt, khách chỉ được nhân viên trả lời</span><button class="btn">Bật bot</button>`
+  // Khách chờ nhân viên lên đầu, sau đó theo tin mới nhất.
+  const sorted = [...customers.filter(isPaused), ...customers.filter((u) => !isPaused(u))]
+  const count = (f: (u: UserRow) => boolean) => customers.filter(f).length
+  const filters: [string, string, number][] = [
+    ["all", "Tất cả", customers.length],
+    ["waiting", "Chờ nhân viên", count(isPaused)],
+    ["bot", "Bot đang trả lời", count((u) => !isPaused(u))],
+    ["bac", "Bưu cục Bắc", count((u) => u.branch === "bac")],
+    ["nam", "Bưu cục Nam", count((u) => u.branch === "nam")],
+    ["none", "Chưa chọn bưu cục", count((u) => !isBranch(u.branch))],
+  ]
+  const hours = p.replyFrom && p.replyTo && p.replyFrom !== p.replyTo ? `${p.replyFrom}–${p.replyTo}` : "cả ngày"
+  const card = (on: boolean, title: string, state: string, action: string, form: string) => `<div class="sw ${on ? "on" : "off"}">
+<div><span class="sw-title">${title}</span><span class="sw-state"><span class="dot${on ? "" : " off"}"></span>${state}</span></div>${form ? `<form method="post" action="${form}" data-live>${action}</form>` : action}</div>`
 
   return layout(
     "Hội thoại",
     "chats",
-    `<h1>Hội thoại</h1>
-<div class="status">${zalo}<form method="post" action="/admin/toggle">${bot}</form></div>
+    `<div class="head"><h1>Hội thoại</h1></div>
 ${p.flash ? `<p class="banner" role="status">${esc(p.flash)}</p>` : ""}
-<form class="status inline" method="post" action="/admin/hours" aria-label="Giờ bot trả lời">
-<label>Bot trả lời từ <input type="time" name="from" value="${esc(p.replyFrom)}"></label>
+<div class="switches">
+${card(p.zaloConnected, "Zalo OA", p.zaloConnected ? "Đã kết nối" : "Chưa kết nối",
+  p.zaloConnected ? `<a class="btn ghost sm" href="/admin/zalo/connect" title="Token tự làm mới, hết hạn ${esc(fullTime(p.tokenExpires))}">Kết nối lại</a>`
+    : '<a class="btn sm" href="/admin/zalo/connect">Kết nối Zalo OA</a>', "")}
+${card(p.botEnabled, "Bot tự trả lời", p.botEnabled ? "Đang bật" : "Đang tắt – chỉ nhân viên trả lời",
+  `<button class="btn ${p.botEnabled ? "ghost " : ""}sm">${p.botEnabled ? "Tắt bot" : "Bật bot"}</button>`, "/admin/toggle")}
+${card(p.handoverEnabled, "Chuyển nhân viên", p.handoverEnabled ? "Bot chuyển khi cần" : "Đang tắt – ca khó bot xin SĐT",
+  `<button class="btn ${p.handoverEnabled ? "ghost " : ""}sm">${p.handoverEnabled ? "Tắt" : "Bật"}</button>`, "/admin/handover-toggle")}
+</div>
+<!--manager--><details class="settings-box"><summary>${ICON.gear}<b>Cài đặt bot</b>
+<span class="muted">Trả lời ${esc(hours)} · chờ khách ${p.debounce} giây · Telegram ${p.telegram.hasToken && p.telegram.chat ? "đã cài" : "chưa cài"} · Zalo ${p.staff.length} nhân viên nhận báo</span></summary>
+<div class="settings-body">
+<section><h3>Giờ trả lời</h3>
+<form class="inline" method="post" action="/admin/hours" aria-label="Giờ bot trả lời" data-live>
+<label>Từ <input type="time" name="from" value="${esc(p.replyFrom)}"></label>
 <label>đến <input type="time" name="to" value="${esc(p.replyTo)}"></label>
 <label>Chờ khách nhắn xong <input type="number" name="debounce" min="0" max="300" required value="${p.debounce}" style="width:5.5em"> giây</label>
-<button class="btn">Lưu</button>
-<span class="muted">${p.replyFrom && p.replyTo && p.replyFrom !== p.replyTo
+<button class="btn sm">Lưu</button></form>
+<p class="hint">${p.replyFrom && p.replyTo && p.replyFrom !== p.replyTo
   ? p.inHours ? "Đang trong giờ trả lời." : "Đang ngoài giờ: bot chưa trả lời, tới giờ sẽ trả lời các tin còn chờ."
-  : "Để trống giờ là bot trả lời cả ngày."}</span>
-</form>
-<details class="group panel"><summary><b>Thông báo cho nhân viên khi có khách nhắn</b>
-<span class="muted">· Telegram: ${p.telegram.hasToken && p.telegram.chat ? "đã cài" : "chưa cài"} · Zalo: ${p.staff.length} nhân viên</span></summary>
-<p class="muted">Khi khách nhắn và khi bot chuyển khách cho nhân viên. Mỗi khách chỉ báo 1 lần mỗi ngày cho mỗi loại, khách nhắn nhiều không báo lặp.</p>
-<h3>Nhóm Telegram</h3>
-<p class="muted">1. Trên Telegram nhắn <b>@BotFather</b> lệnh /newbot để tạo bot, chép mã token. 2. Thêm bot vào nhóm nhân viên và nhắn 1 tin bất kỳ trong nhóm.
-3. Dán token vào đây, để trống chat ID, bấm Lưu (hệ thống tự tìm nhóm).</p>
-<form class="stack" method="post" action="/admin/notify">
+  : "Để trống giờ là bot trả lời cả ngày."}</p></section>
+<section><h3>Báo nhân viên qua nhóm Telegram</h3>
+<p class="hint">Có 2 loại thông báo: <b>khách nhắn OA</b> (mỗi khách 1 lần mỗi ngày) và <b>đơn hàng</b> (đơn mới, khách sửa đơn, khách đổi bưu cục – mỗi lần đều báo).
+Tạo bot bằng <b>@BotFather</b>, thêm bot vào nhóm, nhắn 1 tin trong nhóm, dán token rồi bấm Lưu (để trống chat ID là tự tìm nhóm).</p>
+<form class="stack" method="post" action="/admin/notify" data-live>
 <label for="tg-token">Token bot Telegram</label><input id="tg-token" name="token" type="password" autocomplete="off" placeholder="${p.telegram.hasToken ? "Đã có token, để trống nếu không đổi" : "123456:ABC..."}">
 <label for="tg-chat">Chat ID nhóm</label><input id="tg-chat" name="chat" value="${esc(p.telegram.chat)}" placeholder="Để trống để tự tìm">
-<div class="row-actions"><button class="btn">Lưu</button><button class="btn ghost" name="action" value="test">Lưu và gửi thử</button>
-${p.telegram.hasToken ? '<button class="btn danger" name="action" value="clear" formnovalidate>Tắt Telegram</button>' : ""}</div>
-</form>
-<h3>Zalo cá nhân của nhân viên</h3>
-<p class="muted">Nhân viên quan tâm OA và nhắn OA 1 tin. Mở hội thoại của nhân viên đó, bấm <b>Nhận thông báo</b>.
-Zalo chỉ cho OA nhắn trong 48 giờ kể từ tin cuối của nhân viên, nên nhân viên cần nhắn OA ít nhất 2 ngày 1 lần (bot không trả lời nhân viên).</p>
+<div class="row-actions"><button class="btn sm">Lưu</button><button class="btn ghost sm" name="action" value="test">Lưu và gửi thử</button>
+${p.telegram.hasToken ? '<button class="btn danger sm" name="action" value="clear" formnovalidate>Tắt Telegram</button>' : ""}</div>
+</form></section>
+<section><h3>Báo nhân viên qua Zalo cá nhân</h3>
+<p class="hint">Nhân viên quan tâm OA và nhắn OA 1 tin, rồi mở hội thoại của nhân viên đó bấm <b>Nhận thông báo</b>.
+Chọn chi nhánh để nhân viên chỉ nhận thông báo khách của bưu cục mình (khách chưa chọn bưu cục thì báo tất cả).
+Zalo chỉ cho OA nhắn trong 48 giờ kể từ tin cuối của nhân viên, nên nhân viên cần nhắn OA ít nhất 2 ngày 1 lần.</p>
 <ul class="kfiles">${p.staff.map((s) => `<li><a href="/admin/u?id=${encodeURIComponent(s.id)}">${esc(displayName(s))}</a>
-<form method="post" action="/admin/notify/staff"><input type="hidden" name="id" value="${esc(s.id)}"><button class="btn danger" aria-label="Gỡ ${esc(displayName(s))} khỏi danh sách nhận thông báo" onclick="return confirm('Gỡ nhân viên này khỏi danh sách nhận thông báo?')">Gỡ khỏi danh sách</button></form></li>`).join("")
-  || '<li class="empty">Chưa có nhân viên nào.</li>'}</ul>
-</details>
-${waiting.length
-  ? `<section class="group"><h2>Chờ nhân viên <span class="muted">(${waiting.length})</span></h2>
-<div class="tape-band" aria-hidden="true"></div><ul class="list">${waiting.map(userRow).join("")}</ul></section>`
-  : ""}
-<section class="group"><h2>Bot đang trả lời <span class="muted">(${others.length})</span></h2>
-<ul class="list">${others.map(userRow).join("") || '<li class="empty">Chưa có khách nào nhắn vào OA. Thử bot ở mục Chat thử trong lúc chờ.</li>'}</ul></section>
+<form class="inline" method="post" action="/admin/notify/staff-branch" data-live><input type="hidden" name="id" value="${esc(s.id)}">
+<label class="sr" for="sb-${esc(s.id)}">Chi nhánh của ${esc(displayName(s))}</label><select id="sb-${esc(s.id)}" name="branch" onchange="this.form.requestSubmit()">
+${[["all", "Cả hai chi nhánh"], ["bac", "Chi nhánh miền Bắc"], ["nam", "Chi nhánh miền Nam"]]
+  .map(([k, v]) => `<option value="${k}"${(s.branch ?? "all") === k ? " selected" : ""}>${v}</option>`).join("")}</select>
+<noscript><button class="btn ghost sm">Lưu</button></noscript></form>
+<form method="post" action="/admin/notify/staff" data-live><input type="hidden" name="id" value="${esc(s.id)}"><button class="btn danger sm" aria-label="Gỡ ${esc(displayName(s))} khỏi danh sách nhận thông báo" onclick="return confirm('Gỡ nhân viên này khỏi danh sách nhận thông báo?')">Gỡ khỏi danh sách</button></form></li>`).join("")
+  || '<li class="empty">Chưa có nhân viên nào.</li>'}</ul></section>
+</div></details><!--/manager-->
+<section class="group">
+<div class="toolbar">
+<label class="search">${ICON.search}<span class="sr">Tìm khách</span><input id="q" type="search" placeholder="Tìm theo tên, số điện thoại, nội dung tin" autocomplete="off"></label>
+<div class="filters" role="group" aria-label="Lọc hội thoại">${filters
+  .map(([key, label, n]) => `<button type="button" class="fchip${key === "waiting" && n ? " warn" : ""}" data-filter="${key}" aria-pressed="${key === "all"}">${label} <b>${n}</b></button>`)
+  .join("")}</div>
+</div>
+${customers.length
+  ? `<ul class="list" id="inbox">${sorted.map(userRow).join("")}</ul>
+<p class="empty" id="no-match" hidden>Không có hội thoại nào khớp. Thử bỏ bớt chữ tìm kiếm hoặc chọn "Tất cả".</p>${LIST_FILTER}`
+  : '<ul class="list"><li class="empty">Chưa có khách nào nhắn vào OA. Thử bot ở mục Chat thử trong lúc chờ.</li></ul>'}
+</section>
 ${staffRows.length
-  ? `<section class="group"><h2>Nhân viên nhận thông báo <span class="muted">(${staffRows.length})</span></h2>
-<ul class="list">${staffRows.map(userRow).join("")}</ul></section>`
+  ? `<details class="group staff-box"><summary><b>Nhân viên nhận thông báo</b> <span class="muted">(${staffRows.length})</span></summary>
+<ul class="list">${staffRows.map(userRow).join("")}</ul></details>`
   : ""}`,
   )
 }
 
-export function conversation(u: User | undefined, id: string, msgs: Message[], err = "", isStaff = false) {
+export function conversation(u: User | undefined, id: string, msgs: Message[], err = "", isStaff = false, watching: string[] = []) {
   // Nhân viên nhận thông báo: bot không trả lời họ, nên luôn hiện ô chat, không cần các nhắc nhở dành cho khách.
   const staff = isPaused(u) || isStaff
   const name = displayName({ id, name: u?.name ?? null })
@@ -389,12 +549,22 @@ export function conversation(u: User | undefined, id: string, msgs: Message[], e
     "chats",
     `<div class="convo-top"><a class="back" href="/admin">‹ Tất cả hội thoại</a>
 <div class="head"><div><h1>${esc(name)}</h1><div class="muted">${u?.phone ? `SĐT ${esc(phoneView(u.phone))} · ` : ""}Zalo ID ${esc(id)}</div></div>${isStaff ? "" : role}</div>
-<form class="inline" method="post" action="/admin/notify/staff">${hiddenId}<input type="hidden" name="back" value="u"><input type="hidden" name="on" value="${isStaff ? "0" : "1"}">
+<!--manager--><form class="inline" method="post" action="/admin/notify/staff" data-live=".convo-top">${hiddenId}<input type="hidden" name="back" value="u"><input type="hidden" name="on" value="${isStaff ? "0" : "1"}">
 <span class="muted">${isStaff ? "Đây là nhân viên nhận thông báo khách nhắn (bot không trả lời người này)." : "Người này là nhân viên?"}</span>
-<button class="btn ghost">${isStaff ? "Thôi nhận thông báo" : "Nhận thông báo"}</button></form></div>
+<button class="btn ghost">${isStaff ? "Thôi nhận thông báo" : "Nhận thông báo"}</button></form><!--/manager-->
+${isStaff ? "" : `<form class="inline" method="post" action="/admin/u/region" data-live=".convo-top">${hiddenId}
+<label class="muted" for="region">Vùng</label><select id="region" name="region"><option value="">Chưa rõ</option>${Object.entries(REGIONS)
+  .map(([k, v]) => `<option value="${k}"${u?.region === k ? " selected" : ""}>${v}</option>`).join("")}</select>
+<label class="muted" for="branch">Bưu cục</label><select id="branch" name="branch"><option value="">Chưa chọn</option>${Object.entries(BRANCHES)
+  .map(([k, v]) => `<option value="${k}"${u?.branch === k ? " selected" : ""}>${v}</option>`).join("")}</select>
+<button class="btn ghost">Lưu</button></form>`}</div>
 ${staff && !isStaff ? `<p class="banner">Bạn đang chat với khách này thay bot, bot im lặng đến ${esc(fullTime(u!.paused_until))}. Bấm Bot trả lời để giao lại cho bot.</p>` : ""}
 ${err ? `<p class="banner error" role="alert">Chưa gửi được tin: ${esc(err)}</p>` : ""}
 ${thread(msgs)}
+${isStaff ? "" : `<form class="inline track-box" method="post" action="/admin/u/track" onsubmit="this.querySelector('button').disabled=true">${hiddenId}
+<label class="muted" for="code">Mã vận đơn</label><textarea id="code" name="code" rows="1" required maxlength="400" placeholder="VD: 607188891, 607188892"></textarea>
+<button class="btn ghost">Gửi mã cho khách &amp; theo dõi</button>
+<span class="muted">${watching.length ? `Đang theo dõi: ${watching.map(esc).join(", ")} – giao thành công bot tự báo khách.` : "Nhiều mã thì cách nhau dấu phẩy. Bot nhắn khách 1 tin gồm mã + hành trình hiện tại, giao thành công tự báo khách."}</span></form>`}
 ${composer}
 ${LIVE_CHAT(id)}`,
   )
@@ -617,57 +787,186 @@ ${cards ? `<ul class="gallery" style="list-style:none;padding:0;margin:0">${card
   )
 }
 
-type Stats = { day: string; customers: DayCustomer[]; orders: Order[] }
+type Stats = { day: string; customers: DayCustomer[]; orders: Order[]; messages: (Message & { user_id: string })[] }
 const hm = (ms: number) => new Date(ms).toLocaleTimeString("vi-VN", { timeZone: TZ, hour: "2-digit", minute: "2-digit" })
+
+const regionName = (r: string | null) => (isRegion(r) ? REGIONS[r] : "")
+const branchName = (b: string | null) => (isBranch(b) ? BRANCHES[b] : "Chưa chọn bưu cục")
+const branchKey = (b: string | null) => (isBranch(b) ? b : "none")
+/** Ngày "YYYY-MM-DD" cộng thêm n ngày. */
+const shiftDay = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
+
+/** Nút tab lọc bảng theo chi nhánh: hiện/ẩn các dòng có data-branch-row, không tải lại trang. */
+const BRANCH_TABS = `<script>(() => {
+  const tabs = document.querySelectorAll("[data-tab]")
+  for (const t of tabs) t.addEventListener("click", () => {
+    for (const x of tabs) x.setAttribute("aria-pressed", String(x === t))
+    for (const row of document.querySelectorAll("[data-branch-row]")) row.hidden = t.dataset.tab !== "all" && row.dataset.branchRow !== t.dataset.tab
+    for (const empty of document.querySelectorAll("[data-empty-for]")) {
+      const table = document.getElementById(empty.dataset.emptyFor)
+      empty.hidden = !table || [...table.querySelectorAll("[data-branch-row]")].some((r) => !r.hidden)
+    }
+  })
+})()</script>`
 
 export function statsPage(s: Stats) {
   const ordered = new Set(s.orders.map((o) => o.user_id))
-  const tile = (n: number, label: string) => `<div class="tile"><b>${n}</b><span>${label}</span></div>`
   const link = (id: string, name: string | null) =>
     `<a href="/admin/u?id=${encodeURIComponent(id)}#latest">${esc(displayName({ id, name }))}</a>`
-  const custRows = s.customers
-    .map((c) => {
-      const notes = [c.is_new ? "Khách mới" : "", c.handover ? "Đã chuyển nhân viên" : "", ordered.has(c.id) ? "Đã chốt đơn" : ""].filter(Boolean)
-      return `<tr><td>${link(c.id, c.name)}</td><td>${c.phone ? esc(phoneView(c.phone)) : '<span class="muted">chưa có</span>'}</td>
-<td>${c.msgs}</td><td>${hm(c.first_at)} – ${hm(c.last_at)}</td><td>${esc(notes.join(", "))}</td></tr>`
+  const groups: [string, string][] = [["bac", "Chi nhánh miền Bắc"], ["nam", "Chi nhánh miền Nam"], ["none", "Chưa chọn bưu cục"]]
+  const cust = (k: string) => s.customers.filter((c) => branchKey(c.branch) === k)
+  const ord = (k: string) => s.orders.filter((o) => branchKey(o.branch) === k)
+
+  // Chỉ số chính: tổng ngày + chia theo chi nhánh ngay trong ô.
+  const metrics: [string, (k: string | null) => number][] = [
+    ["Khách nhắn tin", (k) => (k ? cust(k) : s.customers).length],
+    ["Khách mới", (k) => (k ? cust(k) : s.customers).filter((c) => c.is_new).length],
+    ["Có số điện thoại", (k) => (k ? cust(k) : s.customers).filter((c) => c.phone).length],
+    ["Đơn đã chốt", (k) => (k ? ord(k) : s.orders).length],
+    ["Chuyển nhân viên", (k) => (k ? cust(k) : s.customers).filter((c) => c.handover).length],
+  ]
+  const tiles = metrics
+    .map(([label, f]) => `<div class="tile"><span>${label}</span><b>${f(null)}</b>
+<small>Bắc ${f("bac")} · Nam ${f("nam")}${f("none") ? ` · Chưa chọn ${f("none")}` : ""}</small></div>`)
+    .join("")
+
+  // So sánh chi nhánh: mỗi chỉ số một hàng, thanh ngang có ghi số (không chỉ dựa vào màu).
+  const compare = metrics
+    .map(([label, f]) => {
+      const max = Math.max(1, f("bac"), f("nam"), f("none"))
+      const cell = (k: string) => `<td><span class="bar-cell"><span class="bar ${k}" style="width:${Math.round((f(k) / max) * 100)}%"></span><b>${f(k)}</b></span></td>`
+      return `<tr><th scope="row">${label}</th>${cell("bac")}${cell("nam")}${cell("none")}</tr>`
     })
     .join("")
+  const regionRow = (k: string) => {
+    const list = cust(k)
+    const counts = Object.entries(REGIONS).map(([r, name]) => [name, list.filter((c) => c.region === r).length] as const).filter(([, n]) => n)
+    const unknown = list.filter((c) => !isRegion(c.region)).length
+    return [...counts.map(([name, n]) => `${name} ${n}`), unknown ? `Chưa rõ ${unknown}` : ""].filter(Boolean).join(" · ") || "—"
+  }
+
+  const branchChip = (b: string | null) => `<span class="chip${isBranch(b) ? "" : " ghost"}">${esc(isBranch(b) ? (b === "bac" ? "Bắc" : "Nam") : "Chưa chọn")}</span>`
   const orderRows = s.orders
-    .map((o) => `<tr><td>${hm(o.created_at)}</td><td>${link(o.user_id, o.name)}</td><td>${o.phone ? esc(phoneView(o.phone)) : ""}</td><td>${esc(o.summary)}</td></tr>`)
+    .map((o) => `<tr data-branch-row="${branchKey(o.branch)}"><td>${hm(o.created_at)}</td><td>${branchChip(o.branch)}</td><td>${link(o.user_id, o.name)}</td>
+<td>${esc(regionName(o.region)) || '<span class="muted">chưa rõ</span>'}</td><td>${o.phone ? esc(phoneView(o.phone)) : ""}</td><td>${esc(o.summary)}</td></tr>`)
     .join("")
+  const custRows = s.customers
+    .map((c) => {
+      const notes = [c.is_new ? '<span class="chip">Khách mới</span>' : "", c.handover ? '<span class="chip warn">Chuyển nhân viên</span>' : "",
+        ordered.has(c.id) ? '<span class="chip ok">Đã chốt đơn</span>' : ""].join("")
+      return `<tr data-branch-row="${branchKey(c.branch)}"><td>${link(c.id, c.name)}</td><td>${branchChip(c.branch)}</td>
+<td>${esc(regionName(c.region)) || '<span class="muted">chưa rõ</span>'}</td>
+<td>${c.phone ? esc(phoneView(c.phone)) : '<span class="muted">chưa có</span>'}</td>
+<td class="num">${c.msgs}</td><td class="num">${hm(c.first_at)} – ${hm(c.last_at)}</td><td><span class="chips">${notes}</span></td></tr>`
+    })
+    .join("")
+  const tabs = [["all", "Tất cả", s.customers.length], ...groups.map(([k, label]) => [k, label, cust(k).length])] as [string, string, number][]
+
   return layout(
     "Thống kê",
     "stats",
     `<div class="head"><h1>Thống kê ngày</h1>
-<form class="inline" method="get" action="/admin/stats"><label for="date" class="muted">Ngày</label>
-<input id="date" type="date" name="date" value="${esc(s.day)}" onchange="this.form.submit()"><noscript><button class="btn ghost">Xem</button></noscript>
-<a class="btn ghost" href="/admin/stats.csv?date=${esc(s.day)}">Tải Excel (CSV)</a></form></div>
-<div class="tiles">${tile(s.customers.length, "Khách nhắn tin")}${tile(s.customers.filter((c) => c.is_new).length, "Khách mới")}
-${tile(s.customers.filter((c) => c.phone).length, "Có số điện thoại")}${tile(s.orders.length, "Đơn đã chốt")}
-${tile(s.customers.filter((c) => c.handover).length, "Chuyển nhân viên")}</div>
+<form class="daynav" method="get" action="/admin/stats">
+<a class="btn ghost sm icon" href="/admin/stats?date=${shiftDay(s.day, -1)}" aria-label="Ngày trước">${ICON.chevL}</a>
+<label class="sr" for="date">Ngày</label><input id="date" type="date" name="date" value="${esc(s.day)}" onchange="this.form.submit()">
+<a class="btn ghost sm icon" href="/admin/stats?date=${shiftDay(s.day, 1)}" aria-label="Ngày sau">${ICON.chevR}</a>
+<noscript><button class="btn ghost sm">Xem</button></noscript>
+<a class="btn sm" href="/admin/stats.xlsx?date=${esc(s.day)}">${ICON.download}Tải Excel</a></form></div>
+<div class="tiles">${tiles}</div>
+<section class="group panel"><h2>So sánh chi nhánh</h2>
+<div class="table-wrap flat"><table class="jobs compare"><thead><tr><th></th><th scope="col">Miền Bắc</th><th scope="col">Miền Nam</th><th scope="col">Chưa chọn bưu cục</th></tr></thead>
+<tbody>${compare}<tr><th scope="row">Khách theo vùng</th>${groups.map(([k]) => `<td class="small">${esc(regionRow(k))}</td>`).join("")}</tr></tbody></table></div>
+<p class="hint">Chi nhánh theo bưu cục khách chọn gửi hàng (khách bấm nút trên Zalo, hoặc nhân viên chọn trong trang hội thoại).</p></section>
+<div class="filters tabs" role="group" aria-label="Lọc theo chi nhánh">${tabs
+  .map(([k, label, n]) => `<button type="button" class="fchip" data-tab="${k}" aria-pressed="${k === "all"}">${label} <b>${n}</b></button>`)
+  .join("")}</div>
 <section class="group"><h2>Đơn đã chốt <span class="muted">(${s.orders.length})</span></h2>
-${orderRows ? `<div class="table-wrap"><table class="jobs"><thead><tr><th>Giờ</th><th>Khách</th><th>SĐT</th><th>Thông tin đơn</th></tr></thead><tbody>${orderRows}</tbody></table></div>`
+${orderRows
+  ? `<div class="table-wrap"><table class="jobs" id="t-orders"><thead><tr><th>Giờ</th><th>Bưu cục</th><th>Khách</th><th>Vùng</th><th>SĐT</th><th>Thông tin đơn</th></tr></thead><tbody>${orderRows}</tbody></table></div>
+<p class="empty" data-empty-for="t-orders" hidden>Chi nhánh này chưa có đơn nào được chốt trong ngày.</p>`
   : '<p class="empty">Chưa có đơn nào được chốt trong ngày.</p>'}</section>
 <section class="group"><h2>Khách nhắn tin <span class="muted">(${s.customers.length})</span></h2>
-${custRows ? `<div class="table-wrap"><table class="jobs"><thead><tr><th>Khách</th><th>SĐT</th><th>Số tin</th><th>Nhắn trong ngày</th><th>Ghi chú</th></tr></thead><tbody>${custRows}</tbody></table></div>`
+${custRows
+  ? `<div class="table-wrap"><table class="jobs" id="t-cust"><thead><tr><th>Khách</th><th>Bưu cục</th><th>Vùng</th><th>SĐT</th><th class="num">Số tin</th><th class="num">Nhắn trong ngày</th><th>Ghi chú</th></tr></thead><tbody>${custRows}</tbody></table></div>
+<p class="empty" data-empty-for="t-cust" hidden>Chi nhánh này không có khách nào nhắn tin trong ngày.</p>`
   : '<p class="empty">Không có khách nào nhắn tin trong ngày này.</p>'}
-<p class="hint">SĐT được tự nhận khi khách gõ số điện thoại trong tin nhắn hoặc khi chốt đơn.</p></section>`,
+<p class="hint">SĐT được tự nhận khi khách gõ số điện thoại trong tin nhắn, bấm chia sẻ số, hoặc khi chốt đơn.</p></section>
+${BRANCH_TABS}`,
   )
 }
 
-/** CSV mở bằng Excel: có BOM để Excel đọc đúng tiếng Việt. */
-export function statsCsv(s: Stats) {
-  const cell = (v: unknown) => `"${String(v ?? "").replaceAll('"', '""')}"`
-  const orders = new Map<string, string[]>()
-  for (const o of s.orders) orders.set(o.user_id, [...(orders.get(o.user_id) ?? []), o.summary])
-  const rows = [
-    ["Ngày", "Tên khách", "SĐT", "Zalo ID", "Số tin", "Nhắn đầu", "Nhắn cuối", "Khách mới", "Chuyển nhân viên", "Đơn đã chốt"],
-    ...s.customers.map((c) => [
-      s.day, displayName(c), c.phone ? phoneView(c.phone) : "", c.id, c.msgs, hm(c.first_at), hm(c.last_at),
-      c.is_new ? "Có" : "", c.handover ? "Có" : "", (orders.get(c.id) ?? []).join(" || "),
+/** File Excel thống kê ngày: Tổng quan, Khách hàng (đầy đủ thông tin), Đơn đã chốt (tách cột), Tin nhắn trong ngày. */
+export function statsXlsx(s: Stats, publicUrl = "") {
+  const ROLE = { user: "Khách", bot: "Bot", staff: "Nhân viên" } as Record<string, string>
+  const dt = (ms: number) => (ms ? new Date(ms).toLocaleString("vi-VN", { timeZone: TZ, hour12: false }) : "")
+  const phone = (p: string | null) => (p ? phoneView(p) : "")
+  const byUser = new Map<string, Message[]>()
+  for (const m of s.messages) byUser.set(m.user_id, [...(byUser.get(m.user_id) ?? []), m])
+  const ordersOf = (id: string) => s.orders.filter((o) => o.user_id === id)
+  const people = new Map(s.customers.map((c) => [c.id, c]))
+
+  // Tổng quan: mỗi chỉ số một dòng, cột theo chi nhánh.
+  const groups = ["bac", "nam", "none"]
+  const cust = (k: string | null) => s.customers.filter((c) => !k || branchKey(c.branch) === k)
+  const ord = (k: string | null) => s.orders.filter((o) => !k || branchKey(o.branch) === k)
+  const metric = (label: string, f: (k: string | null) => number) => [label, f(null), ...groups.map((k) => f(k))]
+  const overview: (string | number)[][] = [
+    ["Chỉ số (ngày " + s.day + ")", "Tổng", "Chi nhánh miền Bắc", "Chi nhánh miền Nam", "Chưa chọn bưu cục"],
+    metric("Khách nhắn tin", (k) => cust(k).length),
+    metric("Khách mới (lần đầu nhắn OA)", (k) => cust(k).filter((c) => c.is_new).length),
+    metric("Khách có số điện thoại", (k) => cust(k).filter((c) => c.phone).length),
+    metric("Đơn đã chốt", (k) => ord(k).length),
+    metric("Khách được chuyển nhân viên", (k) => cust(k).filter((c) => c.handover).length),
+    metric("Tổng tin khách gửi trong ngày", (k) => cust(k).reduce((n, c) => n + c.msgs, 0)),
+    ...Object.entries(REGIONS).map(([r, name]) => metric(`Khách ở ${name}`, (k) => cust(k).filter((c) => c.region === r).length)),
+    metric("Khách chưa rõ vùng", (k) => cust(k).filter((c) => !isRegion(c.region)).length),
+  ]
+
+  const customers: (string | number)[][] = [
+    ["Chi nhánh", "Vùng", "Tên Zalo", "Số điện thoại", "Zalo ID", "Khách mới", "Lần đầu nhắn OA", "Nhắn đầu trong ngày", "Nhắn cuối trong ngày",
+      "Số tin trong ngày", "Tổng tin từ trước tới nay", "Chuyển nhân viên", "Số đơn đã chốt", "Đơn đã chốt", "Khách hỏi gì (tin của khách trong ngày)",
+      "Trả lời cuối của bot / nhân viên", "Link hội thoại"],
+    ...s.customers.map((c) => {
+      const msgs = byUser.get(c.id) ?? []
+      const asked = msgs.filter((m) => m.role === "user").map((m) => `${hm(m.created_at)} ${m.text}`).join("\n")
+      const lastReply = msgs.filter((m) => m.role !== "user").at(-1)
+      const orders = ordersOf(c.id)
+      return [
+        branchName(c.branch), regionName(c.region) || "Chưa rõ", displayName(c), phone(c.phone), c.id, c.is_new ? "Có" : "", dt(c.first_ever),
+        hm(c.first_at), hm(c.last_at), c.msgs, c.total_msgs, c.handover ? "Có" : "", orders.length, orders.map((o) => o.summary).join("\n"),
+        asked.slice(0, 5000), lastReply ? `${ROLE[lastReply.role] ?? lastReply.role}: ${lastReply.text}`.slice(0, 2000) : "",
+        publicUrl ? `${publicUrl}/admin/u?id=${encodeURIComponent(c.id)}` : "",
+      ]
+    }),
+  ]
+
+  // Đơn: tách các phần "Nước đến: … | Hàng: … | …" bot ghi thành cột riêng.
+  const FIELDS = ["Nước đến", "Hàng", "Cân nặng", "Kích thước", "Giá báo", "Lấy hàng"]
+  const field = (summary: string, name: string) =>
+    summary.split("|").map((p) => p.trim()).find((p) => p.toLowerCase().startsWith(name.toLowerCase() + ":"))?.slice(name.length + 1).trim() ?? ""
+  const orders: (string | number)[][] = [
+    ["Giờ chốt", "Sửa lần cuối", "Chi nhánh", "Vùng", "Tên Zalo", "SĐT", ...FIELDS, "Toàn bộ thông tin đơn", "Link hội thoại"],
+    ...s.orders.map((o) => [
+      dt(o.created_at), o.updated_at ? dt(o.updated_at) : "", branchName(o.branch), regionName(o.region) || "Chưa rõ", displayName({ id: o.user_id, name: o.name }),
+      phone(o.phone) || field(o.summary, "SĐT"), ...FIELDS.map((f) => field(o.summary, f)), o.summary,
+      publicUrl ? `${publicUrl}/admin/u?id=${encodeURIComponent(o.user_id)}` : "",
     ]),
   ]
-  return `﻿${rows.map((r) => r.map(cell).join(",")).join("\r\n")}\r\n`
+
+  const messages: (string | number)[][] = [
+    ["Thời gian", "Chi nhánh", "Tên Zalo", "SĐT", "Người gửi", "Nội dung"],
+    ...s.messages.map((m) => {
+      const c = people.get(m.user_id)
+      return [dt(m.created_at), branchName(c?.branch ?? null), displayName({ id: m.user_id, name: c?.name ?? null }), phone(c?.phone ?? null), ROLE[m.role] ?? m.role, m.text]
+    }),
+  ]
+
+  return xlsx([
+    { name: "Tổng quan", rows: overview, widths: [34, 10, 20, 20, 20] },
+    { name: "Khách hàng", rows: customers, widths: [24, 12, 22, 14, 22, 10, 18, 12, 12, 10, 12, 12, 10, 50, 60, 50, 40] },
+    { name: "Đơn đã chốt", rows: orders, widths: [18, 18, 24, 12, 22, 14, 14, 20, 12, 16, 16, 30, 60, 40] },
+    { name: "Tin nhắn", rows: messages, widths: [18, 24, 22, 14, 11, 90] },
+  ])
 }
 
 export function loginPage(next: string, error = "") {

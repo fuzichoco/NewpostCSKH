@@ -4,19 +4,26 @@ import * as zalo from "./zalo.ts"
 // Báo cho nhân viên khi có khách nhắn: qua Zalo cá nhân (nhân viên quan tâm OA, OA nhắn tư vấn cho họ)
 // và/hoặc nhóm Telegram (bot Telegram của công ty).
 
-/** Zalo ID các nhân viên nhận thông báo. Zalo chỉ cho OA nhắn trong 48 giờ kể từ lần cuối nhân viên nhắn OA. */
-export function staffIds(): string[] {
+/** Nhân viên nhận thông báo qua Zalo và chi nhánh phụ trách ("all" = cả hai chi nhánh).
+ *  Zalo chỉ cho OA nhắn trong 48 giờ kể từ lần cuối nhân viên nhắn OA. */
+export type StaffBranch = "bac" | "nam" | "all"
+export type Staff = { id: string; branch: StaffBranch }
+
+export function staffList(): Staff[] {
   try {
-    return JSON.parse(db.getKv("notify_zalo") ?? "[]")
+    // Bản cũ lưu mảng Zalo ID: coi là nhận thông báo cả hai chi nhánh.
+    return (JSON.parse(db.getKv("notify_zalo") ?? "[]") as (string | Staff)[]).map((s) => (typeof s === "string" ? { id: s, branch: "all" } : s))
   } catch {
     return []
   }
 }
 
-export function setStaff(userId: string, on: boolean) {
-  const ids = staffIds().filter((x) => x !== userId)
-  if (on) ids.push(userId)
-  db.setKv("notify_zalo", JSON.stringify(ids))
+export const staffIds = () => staffList().map((s) => s.id)
+
+export function setStaff(userId: string, on: boolean, branch: StaffBranch = "all") {
+  const list = staffList().filter((s) => s.id !== userId)
+  if (on) list.push({ id: userId, branch })
+  db.setKv("notify_zalo", JSON.stringify(list))
 }
 
 async function telegramApi(token: string, method: string, body?: object): Promise<any> {
@@ -45,9 +52,12 @@ export async function sendTelegram(text: string, token = db.getKv("tg_token"), c
   if (token && chat) await telegramApi(token, "sendMessage", { chat_id: chat, text, disable_web_page_preview: true })
 }
 
-/** Gửi tới mọi kênh đã cài; kênh nào lỗi chỉ ghi log, không chặn kênh khác. Trả về danh sách lỗi. */
-export async function notifyStaff(text: string): Promise<string[]> {
-  const jobs = [sendTelegram(text), ...staffIds().map((id) => zalo.sendText(id, text))]
+/** Gửi tới các kênh đã cài; kênh nào lỗi chỉ ghi log, không chặn kênh khác. Trả về danh sách lỗi.
+ *  branch: chi nhánh của khách – chỉ báo nhân viên Zalo phụ trách chi nhánh đó (chưa biết thì báo tất cả).
+ *  telegram / zalo = false: bỏ kênh đó. */
+export async function notifyStaff(text: string, opts: { branch?: string | null; telegram?: boolean; zalo?: boolean } = {}): Promise<string[]> {
+  const targets = opts.zalo === false ? [] : staffList().filter((s) => !opts.branch || s.branch === "all" || s.branch === opts.branch)
+  const jobs = [opts.telegram === false ? Promise.resolve() : sendTelegram(text), ...targets.map((s) => zalo.sendText(s.id, text))]
   const errors: string[] = []
   for (const r of await Promise.allSettled(jobs)) {
     if (r.status === "rejected") errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason))

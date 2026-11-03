@@ -10,10 +10,16 @@ export const HANDOVER_TAG = "[CHUYEN_NHAN_VIEN]"
 /** AI thêm "[GUI_ANH:3]" để gửi ảnh số 3, và một dòng "[DON_HANG] ..." khi khách chốt đơn. */
 export const IMAGE_TAG = /\[GUI_ANH:(\d+)\]/g
 export const ORDER_TAG = "[DON_HANG]"
+/** Khách sửa đơn đã chốt: "[DON_HANG_SUA #12] Nước đến: … | …" (ghi đầy đủ thông tin sau khi sửa). */
+export const ORDER_EDIT_TAG = /\[DON_HANG_SUA\s*#?(\d+)\s*\]/
 /** AI thêm "[XIN_SDT]" khi cần số điện thoại: hệ thống gửi nút chia sẻ SĐT, khách bấm là xong, không phải gõ. */
 export const PHONE_TAG = "[XIN_SDT]"
 /** AI thêm "[KHONG_HOI_THAM]" khi khách không có nhu cầu gửi hàng mới (tra đơn, khiếu nại…): bot không gửi tin hỏi thăm 2 giờ. */
 export const NO_FOLLOW_UP_TAG = "[KHONG_HOI_THAM]"
+/** AI thêm "[HOI_VUNG]" khi khách cần gửi hàng mà chưa biết vùng / bưu cục: bot gửi tin có nút cho khách chọn. */
+export const REGION_ASK_TAG = "[HOI_VUNG]"
+/** AI thêm "[VUNG: bac|trung|nam|tay]" khi khách tự nói tỉnh/thành mình ở. */
+export const REGION_TAG = /\[VUNG:\s*(\w+)\s*\]/gi
 
 const RULES = `
 # QUY TẮC BẮT BUỘC
@@ -22,7 +28,10 @@ const RULES = `
   Thiếu thông tin (nước đến, tài liệu hay hàng hóa, cân nặng, kích thước) thì hỏi thêm, KHÔNG chuyển nhân viên.
 - Khách hỏi gửi một mặt hàng: tra mục hàng cấm và hạn chế. Mức KHÔNG NHẬN thì tự từ chối lịch sự, KHÔNG chuyển nhân viên.
   Mức CÓ ĐIỀU KIỆN thì trước hết xin tên hàng cụ thể, thành phần, số lượng, nước đến và số điện thoại; khách trả lời đủ rồi mới chuyển nhân viên.
-- CHỈ chuyển nhân viên khi: khách khiếu nại / bức xúc; hỏi bồi thường; cần tra cứu một đơn hàng cụ thể;
+- Khách hỏi tình trạng / hành trình đơn đã gửi và có mã vận đơn: trả lời CHỈ các dòng "[TRA_DON: mã vận đơn]", mỗi mã một dòng
+  (tối đa 5 mã). Hệ thống sẽ tra và đưa lại "KẾT QUẢ TRA VẬN ĐƠN" để bạn viết câu trả lời. Chưa có mã thì xin khách mã vận đơn.
+  Số điện thoại KHÔNG phải mã vận đơn. KHÔNG chuyển nhân viên chỉ vì khách hỏi tra đơn.
+- CHỈ chuyển nhân viên khi: khách khiếu nại / bức xúc; hỏi bồi thường;
   kết quả tính giá báo không dịch vụ nào có giá hoặc quá mức cân; hàng mức CÓ ĐIỀU KIỆN (đã xin đủ thông tin như trên); khách cần ước tính
   số tiền thuế hoặc hàng đang bị giữ ở hải quan; hoặc câu hỏi hoàn toàn không có trong kho kiến thức.
   Khi đó trả lời ĐÚNG MỘT DÒNG "${HANDOVER_TAG}" và không viết gì khác.
@@ -34,6 +43,11 @@ const RULES = `
   là thông tin khách vừa gửi qua nút đó. Khi đã đủ: cảm ơn khách, báo nhân viên sẽ gọi xác nhận và hẹn lấy hàng,
   rồi thêm MỘT dòng cuối đúng mẫu (hệ thống tự ẩn dòng này với khách):
   ${ORDER_TAG} Nước đến: ... | Hàng: ... | Cân nặng: ... | Kích thước: ... | Giá báo: ... | SĐT: ... | Lấy hàng: ...
+- Khách đã có đơn (xem "ĐƠN ĐÃ CHỐT" trong THÔNG TIN KHÁCH) và muốn SỬA đơn đó (đổi địa chỉ lấy hàng, SĐT, cân nặng, hàng, nước đến…):
+  nhắc lại thông tin mới cho khách xác nhận, báo nhân viên sẽ cập nhật, rồi thêm MỘT dòng cuối ghi ĐẦY ĐỦ thông tin đơn sau khi sửa:
+  [DON_HANG_SUA #mã đơn] Nước đến: ... | Hàng: ... | Cân nặng: ... | Kích thước: ... | Giá báo: ... | SĐT: ... | Lấy hàng: ...
+  Khách gửi THÊM lô hàng khác (đơn mới, kể cả vài ngày sau) thì làm như chốt đơn mới với dòng ${ORDER_TAG}; không sửa đơn cũ.
+  Không rõ khách muốn sửa đơn cũ hay gửi đơn mới thì hỏi lại khách trước.
 - Khách đang hỏi về đơn đã gửi (tra cứu, mã vận đơn, hàng chậm, thất lạc), khiếu nại, hoặc nói rõ không có nhu cầu gửi hàng:
   thêm MỘT dòng cuối "${NO_FOLLOW_UP_TAG}" (hệ thống tự ẩn, để không nhắn mời chốt đơn với khách này).
 - Trả lời ngắn gọn, dưới 1500 ký tự, văn bản thuần (không dùng markdown như ** hay #).`
@@ -57,7 +71,9 @@ function priceRules() {
   const items = itemSurcharges().length > 0
   const itemRule = items
     ? `\nSTT mặt hàng: số thứ tự (cột STT) trong bảng PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG nếu hàng của khách thuộc nhóm trong bảng
-(nhiều nhóm thì cách bằng dấu phẩy, ví dụ 7,14); không thuộc nhóm nào hoặc tài liệu thì "-". Chưa biết khách gửi hàng gì thì hỏi luôn cùng lúc hỏi kích thước.`
+(nhiều nhóm thì cách bằng dấu phẩy, ví dụ 7,14); không thuộc nhóm nào hoặc tài liệu thì "-".
+CHỈ ghi STT khi hàng của khách khớp ĐÚNG mô tả nhóm. Quần áo, giày dép, túi xách thông thường KHÔNG thuộc nhóm hàng fake / hàng thương hiệu,
+trừ khi khách nói rõ là hàng fake, hàng nhái hoặc hàng hiệu. Không chắc thì ghi "-". Chưa biết khách gửi hàng gì thì hỏi luôn cùng lúc hỏi kích thước.`
     : ""
   return `\n# BÁO GIÁ CƯỚC QUỐC TẾ
 Hệ thống có bảng giá: ${services.map((s) => s.name).join("; ")}. Bạn KHÔNG tự tra hay tự tính giá.
@@ -88,6 +104,13 @@ export function currentConfig(): AiConfig {
     model: getKv("ai_model") || envModel || PROVIDERS[provider].models[0],
     key: getKv(`ai_key_${provider}`) || envKey || "",
   }
+}
+
+/** Model dự phòng khi model chính báo quá tải (Gemini hay báo 503 "high demand" vào giờ cao điểm):
+ *  đổi giữa flash-lite và flash cùng key. Hãng khác giữ nguyên. */
+export function fallbackConfig(cfg = currentConfig()): AiConfig {
+  if (cfg.provider !== "gemini") return cfg
+  return { ...cfg, model: cfg.model === "gemini-flash-latest" ? "gemini-flash-lite-latest" : "gemini-flash-latest" }
 }
 
 type Turn = { role: "user" | "model"; text: string }
