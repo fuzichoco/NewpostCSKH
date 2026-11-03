@@ -118,7 +118,10 @@ code{background:var(--bot);padding:1px 5px;border-radius:4px;font-size:13px}
 .msg.failed .meta{color:var(--signal)}
 .composer{position:sticky;bottom:0;background:var(--paper);padding:12px 0 16px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
 .composer .row-actions{display:flex;flex-direction:column;gap:8px}
-.track-box{display:grid;grid-template-columns:1fr auto;gap:8px;padding:12px 0 0;border-top:1px solid var(--line)}
+.dock{position:sticky;bottom:0;z-index:2;background:var(--paper);border-top:1px solid var(--line);padding:12px 0 16px;display:flex;flex-direction:column;gap:10px}
+.dock .composer{position:static;padding:0}
+.dock .banner{margin:0}
+.track-box{display:grid;grid-template-columns:1fr auto;gap:8px;margin:0}
 .track-box textarea{font:inherit;font-size:14px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);resize:none;min-width:0}
 .who h1{font-size:26px;line-height:1.2}
 .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
@@ -578,11 +581,11 @@ ${isStaff ? "" : `<form class="inline" method="post" action="/admin/u/region" da
 ${staff && !isStaff ? `<p class="banner">Bạn đang chat với khách này thay bot, bot im lặng đến ${esc(fullTime(u!.paused_until))}. Bấm Bot trả lời để giao lại cho bot.</p>` : ""}
 ${err ? `<p class="banner error" role="alert">Chưa gửi được tin: ${esc(err)}</p>` : ""}
 ${thread(msgs)}
-${isStaff ? "" : `<form class="track-box" method="post" action="/admin/u/track" onsubmit="this.querySelector('button').disabled=true"
+<div class="dock">${isStaff ? "" : `<form class="track-box" method="post" action="/admin/u/track" onsubmit="this.querySelector('button').disabled=true"
   title="Bot nhắn khách mã + hành trình hiện tại, giao thành công tự báo khách">${hiddenId}
 <textarea name="code" rows="1" required maxlength="400" aria-label="Mã vận đơn gửi khách" placeholder="Mã vận đơn gửi khách (nhiều mã cách nhau dấu phẩy)"></textarea>
 <button class="btn ghost">Gửi mã &amp; theo dõi</button></form>`}
-${composer}
+${composer}</div>
 ${LIVE_CHAT(id)}`,
   )
 }
