@@ -118,8 +118,18 @@ code{background:var(--bot);padding:1px 5px;border-radius:4px;font-size:13px}
 .msg.failed .meta{color:var(--signal)}
 .composer{position:sticky;bottom:0;background:var(--paper);padding:12px 0 16px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
 .composer .row-actions{display:flex;flex-direction:column;gap:8px}
-.track-box{padding:10px 0 0;border-top:1px solid var(--line)}
-.track-box textarea{width:18em;max-width:100%;min-height:0;resize:vertical}
+.track-box{display:grid;grid-template-columns:1fr auto;gap:8px;padding:12px 0 0;border-top:1px solid var(--line)}
+.track-box textarea{font:inherit;font-size:14px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);resize:none;min-width:0}
+.who h1{font-size:26px;line-height:1.2}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.tag{font-size:13px;font-weight:600;padding:2px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--line);white-space:nowrap}
+.tag.soft{font-weight:500;color:var(--muted)}
+.tag.warn{background:var(--tape-soft);border-color:var(--tape)}
+.more{margin-top:8px}
+.more summary{cursor:pointer;color:var(--muted);font-size:14px;width:max-content;padding:4px 0}
+.more summary:hover{color:var(--ink)}
+.more-body{display:flex;flex-direction:column;gap:8px;padding:6px 0 4px}
+.more-body form{margin:0}
 textarea{width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);resize:vertical}
 textarea:focus{border-color:var(--focus)}
 .editor{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:24px}
@@ -547,24 +557,31 @@ export function conversation(u: User | undefined, id: string, msgs: Message[], e
   return layout(
     name,
     "chats",
+    // Đầu trang gọn: tên + vài nhãn chính; sửa vùng/bưu cục, Zalo ID, nhận thông báo gom vào "Chi tiết" (đóng sẵn).
     `<div class="convo-top"><a class="back" href="/admin">‹ Tất cả hội thoại</a>
-<div class="head"><div><h1>${esc(name)}</h1><div class="muted">${u?.phone ? `SĐT ${esc(phoneView(u.phone))} · ` : ""}Zalo ID ${esc(id)}</div></div>${isStaff ? "" : role}</div>
-<!--manager--><form class="inline" method="post" action="/admin/notify/staff" data-live=".convo-top">${hiddenId}<input type="hidden" name="back" value="u"><input type="hidden" name="on" value="${isStaff ? "0" : "1"}">
-<span class="muted">${isStaff ? "Đây là nhân viên nhận thông báo khách nhắn (bot không trả lời người này)." : "Người này là nhân viên?"}</span>
-<button class="btn ghost">${isStaff ? "Thôi nhận thông báo" : "Nhận thông báo"}</button></form><!--/manager-->
+<div class="head"><div class="who"><h1>${esc(name)}</h1><div class="tags">
+${u?.phone ? `<span class="tag">${esc(phoneView(u.phone))}</span>` : ""}
+${isStaff ? '<span class="tag">Nhân viên nhận thông báo</span>' : isBranch(u?.branch) ? `<span class="tag">${BRANCHES[u.branch]}</span>` : '<span class="tag warn">Chưa chọn bưu cục</span>'}
+${!isStaff && isRegion(u?.region) ? `<span class="tag soft">${REGIONS[u.region]}</span>` : ""}
+${watching.length ? `<span class="tag soft">Theo dõi ${watching.length} vận đơn</span>` : ""}</div></div>${isStaff ? "" : role}</div>
+<details class="more"><summary>Chi tiết</summary><div class="more-body">
 ${isStaff ? "" : `<form class="inline" method="post" action="/admin/u/region" data-live=".convo-top">${hiddenId}
-<label class="muted" for="region">Vùng</label><select id="region" name="region"><option value="">Chưa rõ</option>${Object.entries(REGIONS)
+<label class="muted" for="region">Vùng</label><select id="region" name="region" onchange="this.form.requestSubmit()"><option value="">Chưa rõ</option>${Object.entries(REGIONS)
   .map(([k, v]) => `<option value="${k}"${u?.region === k ? " selected" : ""}>${v}</option>`).join("")}</select>
-<label class="muted" for="branch">Bưu cục</label><select id="branch" name="branch"><option value="">Chưa chọn</option>${Object.entries(BRANCHES)
-  .map(([k, v]) => `<option value="${k}"${u?.branch === k ? " selected" : ""}>${v}</option>`).join("")}</select>
-<button class="btn ghost">Lưu</button></form>`}</div>
+<label class="muted" for="branch">Bưu cục</label><select id="branch" name="branch" onchange="this.form.requestSubmit()"><option value="">Chưa chọn</option>${Object.entries(BRANCHES)
+  .map(([k, v]) => `<option value="${k}"${u?.branch === k ? " selected" : ""}>${v}</option>`).join("")}</select></form>`}
+<p class="hint">Zalo ID ${esc(id)}${watching.length ? ` · Đang theo dõi: ${watching.map(esc).join(", ")}` : ""}</p>
+<!--manager--><form class="inline" method="post" action="/admin/notify/staff" data-live=".convo-top">${hiddenId}<input type="hidden" name="back" value="u"><input type="hidden" name="on" value="${isStaff ? "0" : "1"}">
+<span class="hint">${isStaff ? "Người này nhận thông báo khách nhắn, bot không trả lời họ." : "Người này là nhân viên?"}</span>
+<button class="btn ghost sm">${isStaff ? "Thôi nhận thông báo" : "Cho nhận thông báo"}</button></form><!--/manager-->
+</div></details></div>
 ${staff && !isStaff ? `<p class="banner">Bạn đang chat với khách này thay bot, bot im lặng đến ${esc(fullTime(u!.paused_until))}. Bấm Bot trả lời để giao lại cho bot.</p>` : ""}
 ${err ? `<p class="banner error" role="alert">Chưa gửi được tin: ${esc(err)}</p>` : ""}
 ${thread(msgs)}
-${isStaff ? "" : `<form class="inline track-box" method="post" action="/admin/u/track" onsubmit="this.querySelector('button').disabled=true">${hiddenId}
-<label class="muted" for="code">Mã vận đơn</label><textarea id="code" name="code" rows="1" required maxlength="400" placeholder="VD: 607188891, 607188892"></textarea>
-<button class="btn ghost">Gửi mã cho khách &amp; theo dõi</button>
-<span class="muted">${watching.length ? `Đang theo dõi: ${watching.map(esc).join(", ")} – giao thành công bot tự báo khách.` : "Nhiều mã thì cách nhau dấu phẩy. Bot nhắn khách 1 tin gồm mã + hành trình hiện tại, giao thành công tự báo khách."}</span></form>`}
+${isStaff ? "" : `<form class="track-box" method="post" action="/admin/u/track" onsubmit="this.querySelector('button').disabled=true"
+  title="Bot nhắn khách mã + hành trình hiện tại, giao thành công tự báo khách">${hiddenId}
+<textarea name="code" rows="1" required maxlength="400" aria-label="Mã vận đơn gửi khách" placeholder="Mã vận đơn gửi khách (nhiều mã cách nhau dấu phẩy)"></textarea>
+<button class="btn ghost">Gửi mã &amp; theo dõi</button></form>`}
 ${composer}
 ${LIVE_CHAT(id)}`,
   )
