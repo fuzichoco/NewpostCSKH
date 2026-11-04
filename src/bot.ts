@@ -3,9 +3,9 @@ import { extname } from "node:path"
 import { type AiConfig, fallbackConfig, generateReply, HANDOVER_TAG, IMAGE_TAG, NO_FOLLOW_UP_TAG, ORDER_EDIT_TAG, ORDER_TAG, PHONE_TAG, REGION_ASK_TAG, REGION_TAG } from "./ai.ts"
 import * as db from "./db.ts"
 import * as notify from "./notify.ts"
-import { PRICE_TAG, priceFallback, priceResult } from "./price.ts"
+import { PRICE_TAG, priceFallback, priceResult, withItems, type PriceService } from "./price.ts"
 import * as region from "./region.ts"
-import { TRACK_TAG, codesText, deliveredText, isDelivered, track, trackResult, type Tracking } from "./tracking.ts"
+import { TRACK_TAG, codesText, deliveredText, eventKey, isDelivered, progressText, track, trackResult, type Tracking } from "./tracking.ts"
 import * as zalo from "./zalo.ts"
 import { normalizePhone } from "./zns.ts"
 
@@ -36,19 +36,56 @@ export function findPhone(text: string): string | null {
 const AI_TRIES = 3
 const RETRY_MS = Number(process.env.AI_RETRY_MS ?? 2000)
 
+/** Câu trả lời có số tiền cước (≥ 1.000đ, không phải mức phụ thu "…đ/kg") chưa từng xuất hiện trong hội thoại và không có thẻ tính giá:
+ *  AI đang tự bịa giá. Số đã có trong hội thoại (giá báo trước đó, nhắc lại khi chốt đơn) hoặc trong phần hệ thống
+ *  đưa cho AI (known: báo giá gần nhất tính đủ mọi hãng) thì được. */
+export function selfPriced(reply: string, hist: db.Message[] = [], known = "") {
+  if (reply.match(PRICE_TAG) || !/cước|giá/i.test(reply)) return false
+  const seen = [...hist.map((m) => m.text), known].join("\n").replace(/[.,\s]/g, "")
+  const amounts = [...reply.matchAll(/(\d{1,3}(?:[.,]\d{3}){1,2})\s*(?:đ|vnđ|vnd|đồng)(?!\s*\/)/gi)].map((m) => m[1].replace(/[.,]/g, ""))
+  return amounts.some((a) => !seen.includes(a))
+}
+/** Các tin khách chưa được trả lời có cân nặng hoặc kích thước (khách vừa nói / đổi thông tin lô hàng). */
+export function newShipmentInfo(hist: db.Message[]) {
+  const pending: string[] = []
+  for (let i = hist.length - 1; i >= 0 && hist[i].role === "user"; i--) pending.push(hist[i].text)
+  const text = pending.join("\n")
+  return /\d+(?:[.,]\d+)?\s*(?:kg|kí|ký|g|gr|gram|gam|lạng)(?![\p{L}])/iu.test(text) || /\d+\s*[x×*]\s*\d+/i.test(text)
+}
+const NO_SELF_PRICE = `\n# LƯU Ý BẮT BUỘC
+Bạn KHÔNG được tự viết số tiền cước. Khách hỏi giá mà đã đủ thông tin thì trả lời CHỈ các dòng [TINH_GIA: ...] theo mục BÁO GIÁ CƯỚC QUỐC TẾ;
+thiếu thông tin thì hỏi khách. Không nói "kho kiến thức không có bảng giá".`
+
 /** Model rẻ (flash-lite) đôi khi chọn chuyển nhân viên ngẫu nhiên, Gemini miễn phí hay báo quá tải:
  *  hỏi lại tối đa 3 lần, chỉ chuyển nhân viên khi cả 3 lần đều chuyển hoặc đều lỗi. */
 /** meta.tracked: các vận đơn code đã tra (done = đã giao thành công) – để theo dõi mã chưa giao xong. */
-async function aiReply(hist: db.Message[], extra = "", meta: { tracked?: { code: string; done: boolean }[] } = {}): Promise<string> {
+async function aiReply(hist: db.Message[], extra = "", meta: { tracked?: { code: string; done: boolean; last: string }[]; priced?: string } = {}): Promise<string> {
   // AI xin tính giá (thẻ TINH_GIA) / tra vận đơn (thẻ TRA_DON): code tra rồi hỏi AI lần nữa kèm kết quả để viết câu trả lời.
   // Đã có kết quả thì lần thử lại chỉ gọi bước viết câu trả lời, đỡ tốn lượt gọi AI (gói miễn phí giới hạn lượt/phút).
   let looked = "", fallback = "", handoverChosen = false
   let cfg: AiConfig | undefined // undefined = model chọn trong trang admin
+  // Khách vừa đổi cân nặng / kích thước: giá cũ (trong lịch sử, báo giá gần nhất) không còn đúng, mọi số tiền phải từ lần tính mới.
+  const fresh = newShipmentInfo(hist)
+  const okHist = fresh ? [] : hist, okKnown = fresh ? "" : extra
   for (let i = 1; i <= AI_TRIES; i++) {
     try {
       let reply = await generateReply(hist, cfg, extra + looked)
+      // AI tự viết giá cước (bịa số theo kiến thức cũ) thay vì thẻ TINH_GIA: bắt viết lại; vẫn tự viết thì bỏ câu đó, thử lần sau.
+      if (!looked && selfPriced(reply, okHist, okKnown)) {
+        reply = await generateReply(hist, cfg, extra + NO_SELF_PRICE)
+        if (selfPriced(reply, okHist, okKnown)) {
+          console.warn("AI tự viết giá cước, bỏ câu trả lời:", reply.slice(0, 200))
+          continue
+        }
+      }
       if (!looked && (reply.match(PRICE_TAG) || reply.match(TRACK_TAG))) {
-        ;({ looked, fallback, tracked: meta.tracked } = await lookup(reply))
+        // AI hay quên ghi nhóm mặt hàng (mỹ phẩm, điện thoại có pin…): code tự thêm theo tin khách để không sót phụ thu.
+        const lastQuote = hist.findLastIndex((m) => m.role === "bot" && /TỔNG|tính cước/.test(m.text))
+        const asked = hist.slice(lastQuote + 1).filter((m) => m.role === "user").slice(-6).map((m) => m.text).join("\n")
+        const tagged = withItems(reply, asked)
+        const tags = [...tagged.matchAll(PRICE_TAG)].map((m) => m[0])
+        if (tags.length) meta.priced = tags.join("\n")
+        ;({ looked, fallback, tracked: meta.tracked } = await lookup(tagged))
         reply = await generateReply(hist, cfg, extra + looked)
       }
       reply = reply.replace(PRICE_TAG, "").replace(TRACK_TAG, "").trim()
@@ -57,7 +94,7 @@ async function aiReply(hist: db.Message[], extra = "", meta: { tracked?: { code:
     } catch (err) {
       console.error(`Gọi AI lỗi (lần ${i}/${AI_TRIES}):`, err instanceof Error ? err.message : err)
       // Model quá tải / hết lượt: lần sau thử model dự phòng thay vì gọi lại đúng model đang quá tải.
-      if (/\b(503|504|429)\b|UNAVAILABLE|DEADLINE_EXCEEDED|RESOURCE_EXHAUSTED|overloaded/i.test(String(err instanceof Error ? err.message : err))) cfg = fallbackConfig()
+      if (/\b(503|504|429)\b|UNAVAILABLE|DEADLINE_EXCEEDED|RESOURCE_EXHAUSTED|overloaded|aborted|timeout|fetch failed/i.test(String(err instanceof Error ? err.message : err))) cfg = fallbackConfig(cfg)
       if (i < AI_TRIES) await new Promise((r) => setTimeout(r, RETRY_MS))
     }
   }
@@ -80,6 +117,23 @@ export type Outgoing = { text: string } | { image: db.Image } | { requestPhone: 
 /** Tin bot lưu khi gửi nút chia sẻ SĐT (để lịch sử và AI biết đã xin). */
 export const PHONE_REQUEST_LOG = "[Gửi yêu cầu chia sẻ số điện thoại]"
 
+const LAST_PRICE_MS = 24 * 3_600_000
+
+/** Bot chỉ báo khách 3 hãng rẻ nhất, kết quả tính đủ mọi hãng không nằm trong lịch sử: khách hỏi tiếp hãng khác
+ *  ("DHL Việt là bao nhiêu?") thì AI tưởng không có giá. Đưa lại kết quả lần tính gần nhất (tính lại theo phụ phí hiện hành). */
+export function lastPriceLines(userId: string, services?: PriceService[]): string[] {
+  const last = JSON.parse(db.getKv(`last_price:${userId}`) ?? "null") as { tags: string; at: number } | null
+  if (!last || Date.now() - last.at > LAST_PRICE_MS) return []
+  const rows = priceResult(last.tags, services).split("\n").filter((l) => /^(Kiện |- |  \+ |Tổng các kiện)/.test(l))
+  if (!rows.length) return []
+  return [
+    `BÁO GIÁ GẦN NHẤT CỦA KHÁCH (hệ thống đã tính cho ĐỦ mọi hãng, kể cả hãng chưa báo khách; thẻ: ${last.tags.replace(/\n/g, " ")}):`,
+    ...rows,
+    "Khách hỏi thêm một hãng / dịch vụ khác cho đúng lô hàng này thì trả lời ngay bằng số ở trên (giữ cách ghi TỔNG = chi tiết), KHÔNG nói chưa có giá.",
+    "Khách đổi nước đến, cân nặng, kích thước hoặc loại hàng thì viết thẻ [TINH_GIA] mới.",
+  ]
+}
+
 /** Thông tin riêng của khách đưa thêm cho AI. */
 function customerInfo(userId: string) {
   const u = db.getUser(userId)
@@ -94,6 +148,7 @@ function customerInfo(userId: string) {
     const when = (ms: number) => new Date(ms).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false })
     lines.push("ĐƠN ĐÃ CHỐT (30 ngày gần đây, mới nhất trước):", ...orders.map((o) => `- #${o.id} chốt lúc ${when(o.created_at)}${o.updated_at ? `, sửa lúc ${when(o.updated_at)}` : ""}: ${o.summary}`))
   }
+  lines.push(...lastPriceLines(userId))
   lines.push("Tập trung tư vấn đúng câu hỏi của khách (gửi đi nước nào, hàng gì, cân nặng, giá cước). KHÔNG hỏi khách ở vùng/miền nào: hệ thống tự hỏi khi cần chuyển nhân viên.")
   if (!r) lines.push("Khách tự nói tỉnh/thành mình ở thì thêm một dòng [VUNG: bac] / [VUNG: trung] / [VUNG: nam] (Bắc: từ Ninh Bình trở ra; Trung: Thanh Hóa đến Bình Thuận và Tây Nguyên; Nam: TP.HCM, Đông Nam Bộ và đồng bằng sông Cửu Long).")
   return `\n# THÔNG TIN KHÁCH\n${lines.join("\n")}`
@@ -142,7 +197,9 @@ export async function answer(userId: string): Promise<Outgoing[] | null> {
   const meta: Parameters<typeof aiReply>[2] = {}
   const reply = await aiReply(hist, customerInfo(userId) + (handoverOff ? NO_HANDOVER_RULE : ""), meta)
   // Vận đơn chưa giao xong: theo dõi, giao thành công thì tự báo khách (watchShipments). Đã giao: thôi theo dõi.
-  for (const t of meta.tracked ?? []) (t.done ? db.unwatchCode : db.watchCode)(userId, t.code)
+  for (const t of meta.tracked ?? []) t.done ? db.unwatchCode(userId, t.code) : db.watchCode(userId, t.code, t.last)
+  // Nhớ thẻ tính giá lần này để khách hỏi thêm hãng khác vẫn có đủ giá (lastPriceLines).
+  if (meta.priced) db.setKv(`last_price:${userId}`, JSON.stringify({ tags: meta.priced, at: Date.now() }))
   // Khách nhắn thêm trong lúc AI đang soạn: bỏ câu đã soạn, lượt chờ của tin mới sẽ đọc lại tất cả rồi trả lời một lần.
   if (db.history(userId, 1)[0]?.id !== hist.at(-1)?.id) return null
   const needStaff = reply.includes(HANDOVER_TAG) || pending.some(wantsHuman)
@@ -396,6 +453,7 @@ function notifyOrder(userId: string, orderId: number, summary: string, opts: { b
 }
 
 /** Khách vừa nhắn (sau khi chờ khách nhắn xong): báo nhân viên lần đầu trong ngày, khách nhắn tiếp không báo lặp.
+ *  Không kèm link trang quản trị (Telegram và Zalo cùng một nội dung, như thông báo đơn hàng).
  *  Khách đã chọn bưu cục thì chỉ báo nhân viên chi nhánh đó. */
 export function notifyNewMessage(userId: string, now = Date.now()) {
   if (userId === "test-admin" || notify.staffIds().includes(userId)) return
@@ -407,15 +465,15 @@ export function notifyNewMessage(userId: string, now = Date.now()) {
   db.setKv(key, dayVN(now))
   const u = db.getUser(userId)
   const text = pending.join(" / ")
-  const link = process.env.PUBLIC_URL ? [`👉 Xem và trả lời khách: ${process.env.PUBLIC_URL}/admin/u?id=${encodeURIComponent(userId)}`] : []
   const lines = [
     "🔔 KHÁCH NHẮN ZALO OA",
     ...customerLines(userId),
     `💬 Tin nhắn: "${text.length > 300 ? `${text.slice(0, 300)}…` : text}"`,
     `🕒 Lúc: ${clockVN(now)}`,
-    ...link,
   ]
-  notify.notifyStaff(lines.join("\n"), { branch: region.isBranch(u?.branch) ? u.branch : null }).catch(() => {})
+  // Link trang quản trị chỉ gắn vào tin Zalo, Telegram không gắn link.
+  const link = process.env.PUBLIC_URL ? `👉 Xem và trả lời khách: ${process.env.PUBLIC_URL}/admin/u?id=${encodeURIComponent(userId)}` : ""
+  notify.notifyStaff(lines.join("\n"), { branch: region.isBranch(u?.branch) ? u.branch : null, zaloExtra: link }).catch(() => {})
 }
 
 const timers = new Map<string, NodeJS.Timeout>()
@@ -531,9 +589,12 @@ const ZALO_WINDOW_MS = 47 * 3_600_000
 
 /** Tra lại các vận đơn đang theo dõi; giao thành công thì nhắn báo khách rồi thôi theo dõi.
  *  Chạy 24/24; theo dõi tối đa 30 ngày. */
+/** Cùng một mốc hành trình: so giờ + nội dung, bỏ qua tên nơi (trang tra cứu hay đổi cách ghi nơi của cùng mốc). */
+const sameEvent = (a: string, b: string) => a.split("|").slice(0, 2).join("|") === b.split("|").slice(0, 2).join("|")
+
 export async function watchShipments(now = Date.now(), lookup = track) {
-  // Gom theo khách: nhiều mã cùng giao thành công trong 1 lượt thì báo 1 tin.
-  const byUser = new Map<string, Tracking[]>()
+  // Gom theo khách: nhiều mã cùng giao thành công / cùng có mốc mới trong 1 lượt thì báo 1 tin.
+  const byUser = new Map<string, { done: Tracking[]; moved: Tracking[] }>()
   for (const w of db.watches()) {
     if (now - w.created_at > WATCH_MAX_MS) {
       db.unwatchCode(w.user_id, w.code)
@@ -541,17 +602,25 @@ export async function watchShipments(now = Date.now(), lookup = track) {
     }
     if (now - w.last_user_at > ZALO_WINDOW_MS) continue
     const t = await lookup(w.code).catch(() => null)
-    if (t && isDelivered(t)) byUser.set(w.user_id, [...(byUser.get(w.user_id) ?? []), t])
+    if (!t?.events.length) continue
+    const key = eventKey(t)
+    // Mã theo dõi từ trước khi có tính năng này (chưa lưu mốc): lưu mốc hiện tại, không báo.
+    if (!isDelivered(t) && !w.last_event) db.setWatchEvent(w.user_id, w.code, key)
+    if (!isDelivered(t) && (!w.last_event || sameEvent(w.last_event, key))) continue
+    const u = byUser.get(w.user_id) ?? { done: [], moved: [] }
+    ;(isDelivered(t) ? u.done : u.moved).push(t)
+    byUser.set(w.user_id, u)
   }
-  for (const [userId, ts] of byUser) {
-    const text = deliveredText(ts)
+  for (const [userId, { done, moved }] of byUser) {
+    const text = [done.length ? deliveredText(done) : "", moved.length ? progressText(moved) : ""].filter(Boolean).join("\n\n")
     const id = db.addMessage(userId, "bot", text)
     try {
       await zalo.sendText(userId, text)
-      for (const t of ts) db.unwatchCode(userId, t.code)
+      for (const t of done) db.unwatchCode(userId, t.code)
+      for (const t of moved) db.setWatchEvent(userId, t.code, eventKey(t))
     } catch (err) {
       db.deleteMessage(id)
-      console.error(`Báo giao thành công ${ts.map((t) => t.code).join(", ")} cho ${userId} lỗi:`, err)
+      console.error(`Báo hành trình ${[...done, ...moved].map((t) => t.code).join(", ")} cho ${userId} lỗi:`, err)
     }
   }
 }
@@ -578,7 +647,7 @@ export async function sendTracking(userId: string, raw: string): Promise<{ missi
     db.deleteMessage(id)
     throw err
   }
-  for (const t of found) (isDelivered(t) ? db.unwatchCode : db.watchCode)(userId, t.code)
+  for (const t of found) isDelivered(t) ? db.unwatchCode(userId, t.code) : db.watchCode(userId, t.code, eventKey(t))
   return { missing }
 }
 
@@ -586,6 +655,8 @@ export async function sendTracking(userId: string, raw: string): Promise<{ missi
 export function startWorkers() {
   let open = inReplyHours()
   let watchedAt = 0
+  // Server vừa khởi động lại (cập nhật mã, VPS khởi động lại) lúc đang trả lời: trả lời nốt các tin khách nhắn trong 30 phút qua.
+  if (open) for (const userId of db.pendingUsers(Date.now() - 30 * 60_000)) schedule(userId, 0)
   setInterval(() => {
     if (Date.now() - watchedAt >= WATCH_EVERY_MS) {
       watchedAt = Date.now()

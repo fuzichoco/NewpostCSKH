@@ -97,9 +97,9 @@ test("bảng giá Excel: nhận diện, tính cước trọn gói / theo kg / qu
   assert.equal(price("XX", 1), null)
   assert.deepEqual(quote("JP", 25, undefined, false, [s]).tooHeavy, ["ABC"])
   const text = priceResult("[TINH_GIA: JP | 0,7 | - | hang]\n[TINH_GIA: JP | 1 | - | hang]", [s])
-  assert.match(text, /ABC: 150\.000đ \(thời gian 2-3 ngày\)/)
+  assert.match(text, /ABC: TỔNG 162\.000đ = cước 150\.000đ \+ VAT 8% 12\.000đ \(thời gian 2-3 ngày\)/)
   assert.match(text, /kích thước chưa có/)
-  assert.match(text, /Tổng các kiện:\n- ABC: 300\.000đ/)
+  assert.match(text, /Tổng các kiện:\n- ABC: 324\.000đ/)
 })
 
 test("bảng giá: mốc khoảng cân lẻ 0,5 (DHL Việt Nam) thì tính theo bước 0,5 kg, mốc chẵn thì làm tròn lên 1 kg", async () => {
@@ -113,21 +113,28 @@ test("bảng giá: mốc khoảng cân lẻ 0,5 (DHL Việt Nam) thì tính theo
   assert.equal(price(svc("VDHL", [49.5, 69.5]), 30.5), 3_050_000) // 30,5 kg × 100.000
   assert.equal(price(svc("VDHL", [49.5, 69.5]), 49.6), 5_000_000) // làm tròn 50 kg, khoảng 69,5
   assert.equal(price(svc("UPS", [44, 70]), 30.5), 3_100_000) // làm tròn lên 31 kg
+
+  // Phụ phí xăng dầu theo từng dịch vụ: dịch vụ không nhập % thì giữ cước gốc.
+  const fuel = { pct: { SDHL: 49.5, CTQ: 28 }, from: "", to: "", updated: 0 }
+  const q = quote("JP", 1, undefined, false, [svc("SDHL", [70]) as any, svc("UPS", [70]) as any], fuel).quotes
+  assert.deepEqual(q.map((x) => [x.code, x.base, x.fuel, x.price]), [["UPS", 3_000_000, null, 3_000_000], ["SDHL", 3_000_000, 49.5, 4_485_000]])
 })
 
 test("phụ phí hải quan theo mặt hàng: đọc bảng trong file kiến thức, chỉ ghi cho chuyên tuyến CTQ/CTU", async () => {
   const { itemSurcharges, priceResult } = await import("../src/price.ts")
   const text = `# 06\n## 8. PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG\n| STT | Mặt hàng | Phụ thu | Ghi chú |\n|---|---|---|---|
 | 7 | Mỹ phẩm; thuốc lá | 30.000 đ/kg | **Myanmar: 50.000 đ/kg** |\n| 14 | Nước hoa | 300.000 đ/kiện | |\n\n## 9. MẪU\n| 99 | Không phải bảng | x | |`
-  const table = itemSurcharges([{ name: "06", text, updated: 0 }])
+  // File trước chỉ nhắc tới cụm chữ trong câu văn (không có bảng): bỏ qua, lấy bảng thật ở file sau.
+  const table = itemSurcharges([{ name: "01", text: "Giá đã gồm **phụ phí hải quan theo mặt hàng** (chuyên tuyến).", updated: 0 }, { name: "06", text, updated: 0 }])
   assert.deepEqual(table.map((x) => x.no), ["7", "14"])
   assert.equal(table[0].note, "Myanmar: 50.000 đ/kg")
   const goods = { zones: [{ name: "Z1", codes: ["JP"], time: "" }], rows: [{ kg: 30, perKg: false, prices: [500_000] }] }
   const svc = (code: string) => ({ code, name: code, file: "", updated: 0, goods }) as any
   const out = priceResult("[TINH_GIA: JP | 3 | - | hang | 7,14]", [svc("CTU"), svc("UPS")], table)
-  assert.match(out, /CHỈ cộng thêm cho CTU \(giá trên chưa gồm\):\n  \+ Mỹ phẩm; thuốc lá: 30\.000 đ\/kg \(Myanmar: 50\.000 đ\/kg\)\n  \+ Nước hoa: 300\.000 đ\/kiện/)
-  assert.doesNotMatch(priceResult("[TINH_GIA: JP | 3 | - | hang | 7]", [svc("UPS")], table), /Phụ phí hải quan/)
-  assert.doesNotMatch(priceResult("[TINH_GIA: JP | 3 | - | hang | -]", [svc("CTU")], table), /Phụ phí hải quan/)
+  // Phụ thu cộng vào tổng chỉ cho chuyên tuyến: 30.000 đ/kg × 3 kg + 300.000 đ/kiện, rồi VAT 8% trên cả cước và phụ thu.
+  assert.match(out, /- CTU: TỔNG 961\.200đ = cước 500\.000đ \+ phụ thu mỹ phẩm 90\.000đ \+ phụ thu nước hoa 300\.000đ \+ VAT 8% 71\.200đ/)
+  assert.match(out, /- UPS: TỔNG 540\.000đ = cước 500\.000đ \+ VAT 8% 40\.000đ\n/)
+  assert.doesNotMatch(priceResult("[TINH_GIA: JP | 3 | - | hang | -]", [svc("CTU")], table), /= cước.*phụ thu/)
 })
 
 test("câu báo giá dự phòng: 3 dịch vụ rẻ nhất, phụ thu mặt hàng chỉ ghi cho chuyên tuyến", async () => {
@@ -136,8 +143,43 @@ test("câu báo giá dự phòng: 3 dịch vụ rẻ nhất, phụ thu mặt hà
   const svc = (code: string, price: number) => ({ code, name: code, file: "", updated: 0, goods: goods(price) }) as any
   const items = [{ no: "7", item: "Mỹ phẩm", fee: "30.000 đ/kg", note: "" }]
   const text = priceFallback("[TINH_GIA: JP | 5 | - | hang | 7]", [svc("UPS", 300), svc("CTU", 200), svc("FED", 400), svc("SDHL", 500)], items)
-  assert.match(text, /- CTU: 200đ \(cộng phụ thu hải quan: 30\.000 đ\/kg\)\n- UPS: 300đ\n- FED: 400đ\nGiá trên/)
+  // CTU cước rẻ nhất nhưng cộng phụ thu 150.000đ thì đắt nhất: xếp theo tổng.
+  assert.match(text, /- UPS: 324đ \(cước 300đ \+ VAT 8% 24đ\)\n- FED: 432đ \(cước 400đ \+ VAT 8% 32đ\)\n- SDHL: 540đ/)
   assert.equal(priceFallback("[TINH_GIA: XX | 5 | - | hang | -]", [svc("UPS", 300)], items), "")
+})
+
+test("phụ thu mặt hàng: lấy đúng bậc cân trong ghi chú, theo chiếc thì báo từ", async () => {
+  const { itemFee } = await import("../src/price.ts")
+  const pin = { no: "4", item: "Pin kèm thiết bị", fee: "300.000–700.000 đ/kiện", note: "1–5 kg: 300k; 5–22 kg: 500k; 22–30 kg: 700k" }
+  assert.deepEqual(itemFee(pin, 0.5), { amount: 300_000, from: false })
+  assert.deepEqual(itemFee(pin, 8), { amount: 500_000, from: false })
+  assert.deepEqual(itemFee({ no: "3", item: "Đồng hồ fake", fee: "100.000 đ/cái", note: "" }, 2), { amount: 100_000, from: true })
+  assert.equal(itemFee({ no: "9", item: "X", fee: "kiểm tra từng trường hợp", note: "" }, 2), null)
+})
+
+test("tự nhận nhóm phụ thu từ tin khách: mỹ phẩm, điện thoại → pin; quần áo thường không tính hàng fake", async () => {
+  const { itemsInText, withItems } = await import("../src/price.ts")
+  const table = [
+    { no: "2", item: "Đồng hồ thường; hàng fake thương hiệu (quần áo, túi, mắt kính)", fee: "50.000 đ/chiếc", note: "" },
+    { no: "4", item: "Pin kèm thiết bị, loa nhỏ cỡ lòng bàn tay", fee: "300.000–700.000 đ/kiện", note: "1–5 kg: 300k" },
+    { no: "7", item: "Thuốc nam, đông y; mỹ phẩm; thuốc lá", fee: "30.000 đ/kg", note: "" },
+  ]
+  assert.deepEqual(itemsInText("gửi 2kg mỹ phẩm đi Mỹ", table), ["7"])
+  assert.deepEqual(itemsInText("gửi 1 cái iPhone đi Úc", table), ["4"])
+  assert.deepEqual(itemsInText("gửi 5kg quần áo đi Nhật", table), [])
+  // "báo giá", "giấy tờ" không phải nhóm Sách, báo, giấy.
+  const books = [{ no: "25", item: "Sách, báo, tạp chí, giấy", fee: "10.000 đ/kg", note: "" }]
+  assert.deepEqual(itemsInText("báo giá giúp em 2kg quần áo, kèm giấy tờ", books), [])
+  assert.deepEqual(itemsInText("gửi 3kg sách đi Mỹ", books), ["25"])
+  assert.equal(withItems("[TINH_GIA: US | 2 | 30x20x15 | hang | -]", "2kg mỹ phẩm", table), "[TINH_GIA: US | 2 | 30x20x15 | hang | 7]")
+  assert.equal(withItems("[TINH_GIA: US | 0,3 | - | tai_lieu]", "thư và mỹ phẩm", table), "[TINH_GIA: US | 0,3 | - | tai_lieu]")
+
+  // Hàng có pin: không báo UPS và DHL qua Singapore (2 hãng không nhận pin).
+  const { priceResult } = await import("../src/price.ts")
+  const goods = { zones: [{ name: "Z1", codes: ["US"], time: "" }], rows: [{ kg: 30, perKg: false, prices: [1_000_000] }] }
+  const svcs = ["UPS", "SDHL", "FED", "CTU"].map((code) => ({ code, name: code, file: "", updated: 0, goods }) as any)
+  const out = priceResult("[TINH_GIA: US | 1 | - | hang | 4]", svcs, table)
+  assert.deepEqual([...out.matchAll(/^- (\w+): TỔNG/gm)].map((m) => m[1]), ["FED", "CTU"])
 })
 
 test("tra vận đơn: đọc các mốc hành trình (mới nhất trước), mã không có thì báo kiểm tra lại", async () => {

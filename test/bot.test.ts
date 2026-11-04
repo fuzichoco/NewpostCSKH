@@ -51,11 +51,43 @@ test("AI lỗi → chuyển nhân viên thay vì im lặng", async () => {
   assert.deepEqual(textOf(await answer("u2")), [HANDOVER_REPLY, "nút: Miền Bắc / Miền Trung / Miền Nam"])
 })
 
-test("AI lỡ chọn chuyển nhân viên 1 lần → hỏi lại, khách vẫn được báo giá", async () => {
-  const restore = fakeAi(["[CHUYEN_NHAN_VIEN]", "Dạ giá tham khảo 1.000.000đ ạ"])
+test("AI tự viết giá cước (không qua hệ thống tính giá) thì bị chặn; nhắc lại giá đã báo trong hội thoại thì được", async () => {
+  const { selfPriced } = await import("../src/bot.ts")
+  assert.ok(selfPriced("Dạ giá cước đi UAE là 285.000 đ ạ"))
+  assert.ok(!selfPriced("Dạ phụ thu mỹ phẩm 30.000 đ/kg ạ")) // mức phụ thu, không phải giá cước
+  assert.ok(!selfPriced("Em ghi nhận đơn, giá báo 1.644.032đ ạ", [{ role: "bot", text: "- CTU: 1.644.032đ", created_at: 0 }]))
+  // Số lấy từ báo giá gần nhất hệ thống đưa cho AI (hãng chưa báo khách) cũng hợp lệ.
+  assert.ok(!selfPriced("Dạ DHL Việt Nam tổng 3.119.799 đ ạ", [], "- DHL Express Việt Nam: TỔNG 3.119.799đ = ..."))
+  const restore = fakeAi(["Dạ giá cước 285.000đ ạ", "Dạ giá cước 259.000đ ạ", "Dạ anh/chị cho em xin cân nặng ạ"])
+  try {
+    db.addMessage("sp1", "user", "gửi thư đi Dubai bao nhiêu")
+    assert.deepEqual(textOf(await answer("sp1")), ["Dạ anh/chị cho em xin cân nặng ạ"])
+  } finally {
+    restore()
+  }
+})
+
+test("khách đổi cân nặng: AI chép lại giá cũ thì bị chặn, phải tính lại", async () => {
+  const { newShipmentInfo } = await import("../src/bot.ts")
+  assert.ok(newShipmentInfo([{ role: "bot", text: "x", created_at: 0 }, { role: "user", text: "thế 3kg thì sao", created_at: 0 }]))
+  assert.ok(newShipmentInfo([{ role: "user", text: "thùng 40x30x20 nhé", created_at: 0 }]))
+  assert.ok(!newShipmentInfo([{ role: "user", text: "DHL Việt là bao nhiêu?", created_at: 0 }]))
+  db.addMessage("sp2", "user", "gửi thư 200g đi Lithuania bao nhiêu")
+  db.addMessage("sp2", "bot", "- DHL Express (qua DHL Singapore): TỔNG 2.218.412 đ")
+  const restore = fakeAi(["Dạ giá cước 3kg là 2.218.412 đ ạ", "Dạ giá cước 3kg là 2.218.412 đ ạ", "Dạ anh/chị cho em xin kích thước kiện ạ"])
+  try {
+    db.addMessage("sp2", "user", "thế 3kg thì sao")
+    assert.deepEqual(textOf(await answer("sp2")), ["Dạ anh/chị cho em xin kích thước kiện ạ"])
+  } finally {
+    restore()
+  }
+})
+
+test("AI lỡ chọn chuyển nhân viên 1 lần → hỏi lại, khách vẫn được tư vấn", async () => {
+  const restore = fakeAi(["[CHUYEN_NHAN_VIEN]", "Dạ anh/chị cho em xin kích thước kiện hàng để báo giá ạ"])
   try {
     db.addMessage("p1", "user", "5kg quần áo đi Trung Quốc bao nhiêu?")
-    assert.deepEqual(textOf(await answer("p1")), ["Dạ giá tham khảo 1.000.000đ ạ"])
+    assert.deepEqual(textOf(await answer("p1")), ["Dạ anh/chị cho em xin kích thước kiện hàng để báo giá ạ"])
     assert.ok(!db.isPaused("p1"))
   } finally {
     restore()
@@ -224,12 +256,28 @@ test("AI viết thẻ [TINH_GIA]: hệ thống tính rồi hỏi AI lần nữa 
     db.addMessage("g1", "user", "3kg đi Nhật thùng 40x30x30 bao nhiêu")
     assert.deepEqual(textOf(await answer("g1")), ["Dạ giá đi Nhật ạ"])
     assert.equal(systems.length, 2)
+    // Nhớ thẻ tính giá để khách hỏi thêm hãng khác vẫn có đủ giá.
+    assert.match(db.getKv("last_price:g1") ?? "", /TINH_GIA: JP \| 3 \| 40x30x30/)
     assert.ok(!systems[0].includes("KẾT QUẢ TÍNH GIÁ"))
     assert.match(systems[1], /KẾT QUẢ TÍNH GIÁ[\s\S]*mã nước JP, hàng hóa, cân thực 3 kg, kích thước 40x30x30, trọng lượng tính cước 7,5 kg/)
   } finally {
     globalThis.fetch = real
     db.setKv("ai_provider", "gemini")
   }
+})
+
+test("khách hỏi thêm hãng chưa báo (DHL Việt Nam đứng thứ 4, tài liệu 0,2 kg đi LT): AI được xem lại đủ giá lần tính gần nhất", async () => {
+  const { lastPriceLines } = await import("../src/bot.ts")
+  const goods = (price: number) => ({ zones: [{ name: "Zone9", codes: ["LT"], time: "4-6 ngày" }], rows: [{ kg: 30, perKg: false, prices: [price] }] })
+  const svcs = ([["FED", 847_271], ["UPS", 1_089_519], ["SDHL", 1_373_970], ["VDHL", 1_932_243]] as const)
+    .map(([code, price]) => ({ code, name: code, file: "", updated: 0, goods: goods(price) }))
+  assert.deepEqual(lastPriceLines("lt1", svcs), [])
+  db.setKv("last_price:lt1", JSON.stringify({ tags: "[TINH_GIA: LT | 0.2 | - | tai_lieu]", at: Date.now() }))
+  const lines = lastPriceLines("lt1", svcs)
+  assert.ok(lines.some((l) => /^- VDHL: TỔNG 2\.086\.822đ = cước 1\.932\.243đ/.test(l)), lines.join("\n"))
+  // Quá 24 giờ thì thôi (giá có thể đã đổi, khách hỏi lại thì tính lại).
+  db.setKv("last_price:lt1", JSON.stringify({ tags: "[TINH_GIA: LT | 0.2 | - | tai_lieu]", at: Date.now() - 25 * 3_600_000 }))
+  assert.deepEqual(lastPriceLines("lt1", svcs), [])
 })
 
 test("tính giá xong mà bước viết câu trả lời lỗi: thử lại chỉ bước đó, không bắt AI viết thẻ lại", async () => {
@@ -460,6 +508,17 @@ Em đã ghi nhận theo dõi các vận đơn chưa giao xong, khi giao thành c
 - 607000005 lúc 03-11-2026 13:24
 Cảm ơn anh/chị đã tin tưởng gửi hàng cùng NewPost Global!`])
     assert.ok(!db.watches().some((w) => w.user_id === "w4"))
+
+    // Hành trình có mốc mới (hàng đi tiếp) thì báo khách 1 lần; mốc không đổi thì không báo lại.
+    const move = (title: string, place: string) => async (code: string) =>
+      ({ code, info: [], events: [{ time: "04-11-2026 11:10", title, place, desc: "" }] })
+    db.addMessage("w5", "user", "đơn 607000006 tới đâu rồi")
+    db.watchCode("w5", "607000006", "03-11-2026 10:25|Kết nối vận chuyển quốc tế|TTKT Miền Nam")
+    const mark = staffSent.length
+    await watchShipments(noon, move("Đã tiếp nhận thông tin vận chuyển", "SINGAPORE - SINGAPORE"))
+    await watchShipments(noon + 1_800_000, move("Đã tiếp nhận thông tin vận chuyển", "SINGAPORE - SINGAPORE"))
+    assert.deepEqual(staffSent.slice(mark), ["Dạ em cập nhật hành trình vận đơn 607000006: Đã tiếp nhận thông tin vận chuyển tại SINGAPORE - SINGAPORE (lúc 04-11-2026 11:10). Em tiếp tục theo dõi và sẽ báo anh/chị khi đơn giao thành công ạ."])
+    assert.ok(db.watches().some((w) => w.user_id === "w5"))
   } finally {
     globalThis.fetch = real
     db.setKv("expires_at", "0") // để các test sau không gửi Zalo thật từ lượt chờ của onUserMessage

@@ -10,7 +10,7 @@ import * as db from "./db.ts"
 import * as notify from "./notify.ts"
 import { isBranch, isRegion } from "./region.ts"
 import { deleteKnowledgeFile, fileToText, listKnowledgeFiles, saveKnowledgeFile } from "./import.ts"
-import { deletePriceService, listPriceServices, parsePriceWorkbook, savePriceService } from "./price.ts"
+import { deletePriceService, getFuel, listPriceServices, parsePriceWorkbook, savePriceService, setFuel } from "./price.ts"
 import * as views from "./views.ts"
 import * as zalo from "./zalo.ts"
 import * as zns from "./zns.ts"
@@ -55,17 +55,22 @@ function aiView(flash: string, error: string) {
   const keys = Object.fromEntries(
     (Object.keys(ai.PROVIDERS) as ai.Provider[]).map((p) => [p, mask(db.getKv(`ai_key_${p}`) || (p === "gemini" ? env.GEMINI_API_KEY : ""))]),
   ) as Record<ai.Provider, string>
-  return views.aiPage({ cfg: ai.currentConfig(), keys, flash, error })
+  return views.aiPage({ cfg: ai.currentConfig(), backup: ai.backupConfig(), keys, flash, error })
 }
 
-/** Trang trả cho nhân viên thường (không phải quản lý): bỏ link tới các trang chỉ quản lý được vào. */
-const staffResponses = new WeakSet<ServerResponse>()
+/** Tài khoản đang xem trang: hiện tên ở thanh bên; nhân viên (staff) bị bỏ link tới các trang chỉ admin vào được. */
+const viewers = new WeakMap<ServerResponse, db.Account>()
 
 function send(res: ServerResponse, status: number, body: string, type = "text/html; charset=utf-8") {
   // Trang quản trị luôn lấy bản mới (bấm quay lại cũng thấy dữ liệu mới nhất, không cần tải lại).
   res.writeHead(status, { "Content-Type": type, ...(type.startsWith("text/html") ? { "Cache-Control": "no-store" } : {}) })
-  // Nhân viên thường: bỏ link trang quản lý và các khối đánh dấu <!--manager-->…<!--/manager--> (Cài đặt bot, Nhận thông báo).
-  res.end(staffResponses.has(res) ? body.replace(/<a data-manager [^>]*>[^<]*<\/a>/g, "").replace(/<!--manager-->[\s\S]*?<!--\/manager-->/g, "") : body)
+  const me = viewers.get(res)
+  if (me) {
+    body = body.replace('<form class="logout"', `<p class="whoami">${views.esc(me.name || me.username)}<span>${me.role === "admin" ? "Admin" : "Nhân viên"}</span><a href="/admin/password">Đổi mật khẩu</a></p><form class="logout"`)
+    // Nhân viên: bỏ link trang admin và các khối đánh dấu <!--manager-->…<!--/manager--> (Cài đặt bot, Nhận thông báo).
+    if (me.role === "staff") body = body.replace(/<a data-manager [^>]*>[^<]*<\/a>/g, "").replace(/<!--manager-->[\s\S]*?<!--\/manager-->/g, "")
+  }
+  res.end(body)
 }
 
 function redirect(res: ServerResponse, to: string) {
@@ -76,26 +81,33 @@ function redirect(res: ServerResponse, to: string) {
 const sha = (s: string) => createHash("sha256").update(s).digest()
 const safeEqual = (a: string, b: string) => timingSafeEqual(sha(a), sha(b))
 
-// --- Đăng nhập: cookie "sid" = "<hạn dùng>.<chữ ký>", không cần lưu phiên ở server. ---
-// Khóa ký lấy từ mật khẩu: đổi ADMIN_PASSWORD / MANAGER_PASSWORD là mọi phiên cũ tự hết hiệu lực.
+// --- Đăng nhập theo tài khoản (bảng accounts): cookie "sid" = "<hạn dùng>.<tên đăng nhập>.<chữ ký>", không lưu phiên ở server.
+// Chữ ký gồm cả mã băm mật khẩu: đổi mật khẩu hoặc xóa tài khoản là phiên cũ của tài khoản đó hết hiệu lực.
+// ADMIN_PASSWORD trong .env làm khóa ký: đổi nó là mọi phiên cũ hết hiệu lực.
 const SESSION_MS = 7 * 24 * 3_600_000
-const sign = (data: string) =>
-  createHmac("sha256", `session:${env.ADMIN_PASSWORD}:${env.MANAGER_PASSWORD ?? ""}:${env.ZALO_APP_SECRET ?? ""}`).update(data).digest("hex")
+const sign = (data: string) => createHmac("sha256", `session:${env.ADMIN_PASSWORD}:${env.ZALO_APP_SECRET ?? ""}`).update(data).digest("hex")
+const sessionMac = (exp: string, acc: db.Account) => sign(`${exp}.${acc.username}.${acc.pass}`)
 
-// Hai loại tài khoản: nhân viên (ADMIN_PASSWORD) và quản lý (MANAGER_PASSWORD) – quản lý mới vào được
-// Kiến thức & giọng văn, Ảnh gửi khách, Model AI. Phiên lưu trong cookie "hạn.vai.chữ ký".
-type Role = "staff" | "manager"
-// Cài đặt bot (giờ trả lời, thông báo nhân viên) cũng chỉ quản lý được đổi.
-const MANAGER_PATHS = ["/admin/settings", "/admin/knowledge", "/admin/price", "/admin/images", "/admin/ai", "/admin/hours", "/admin/notify"]
+// Trang chỉ admin vào được: Kiến thức & giọng văn, Ảnh gửi khách, Model AI, cài đặt bot, tài khoản.
+const ADMIN_PATHS = ["/admin/settings", "/admin/knowledge", "/admin/price", "/admin/images", "/admin/ai", "/admin/hours", "/admin/notify", "/admin/accounts"]
+const USERNAME = /^[a-z0-9_-]{3,30}$/
 
-function sessionRole(req: IncomingMessage): Role | null {
-  const sid = /(?:^|;\s*)sid=([^;]+)/.exec(req.headers.cookie ?? "")?.[1] ?? ""
-  const [exp, role, mac] = sid.split(".")
-  if (!env.ADMIN_PASSWORD || !exp || !mac || Number(exp) <= Date.now() || (role !== "staff" && role !== "manager")) return null
-  return safeEqual(mac, sign(`${exp}.${role}`)) ? role : null
+// Lần đầu chạy (chưa có tài khoản nào): tạo sẵn từ mật khẩu cũ trong .env để vẫn đăng nhập được,
+// "admin" dùng MANAGER_PASSWORD (không có thì ADMIN_PASSWORD), "nhanvien" dùng ADMIN_PASSWORD.
+if (!db.listAccounts().length && env.ADMIN_PASSWORD) {
+  db.addAccount("admin", "Admin", env.MANAGER_PASSWORD || env.ADMIN_PASSWORD, "admin")
+  if (env.MANAGER_PASSWORD) db.addAccount("nhanvien", "Nhân viên", env.ADMIN_PASSWORD, "staff")
 }
 
-const isLoggedIn = (req: IncomingMessage) => sessionRole(req) !== null
+function sessionAccount(req: IncomingMessage): db.Account | null {
+  const sid = /(?:^|;\s*)sid=([^;]+)/.exec(req.headers.cookie ?? "")?.[1] ?? ""
+  const [exp, username, mac] = sid.split(".")
+  if (!env.ADMIN_PASSWORD || !exp || !mac || Number(exp) <= Date.now()) return null
+  const acc = db.getAccount(username ?? "")
+  return acc && safeEqual(mac, sessionMac(exp, acc)) ? acc : null
+}
+
+const isLoggedIn = (req: IncomingMessage) => sessionAccount(req) !== null
 
 function setSession(req: IncomingMessage, res: ServerResponse, value: string, maxAgeSec: number) {
   const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : ""
@@ -137,17 +149,15 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, url: URL) 
   if (recentFails(ip).length >= 5) {
     return send(res, 429, views.loginPage(next, "Nhập sai quá nhiều lần. Thử lại sau 15 phút."))
   }
-  const password = form.get("password") ?? ""
-  const role: Role | null = env.MANAGER_PASSWORD && safeEqual(password, env.MANAGER_PASSWORD) ? "manager"
-    : safeEqual(password, env.ADMIN_PASSWORD) ? "staff"
-    : null
-  if (!role) {
+  const username = (form.get("username") ?? "").trim().toLowerCase()
+  const acc = db.getAccount(username)
+  if (!acc || !db.checkPassword(form.get("password") ?? "", acc.pass)) {
     recentFails(ip).push(Date.now())
-    return send(res, 401, views.loginPage(next, "Mật khẩu chưa đúng."))
+    return send(res, 401, views.loginPage(next, "Tên đăng nhập hoặc mật khẩu chưa đúng.", username))
   }
   failedLogins.delete(ip)
   const exp = String(Date.now() + SESSION_MS)
-  setSession(req, res, `${exp}.${role}.${sign(`${exp}.${role}`)}`, SESSION_MS / 1000)
+  setSession(req, res, `${exp}.${acc.username}.${sessionMac(exp, acc)}`, SESSION_MS / 1000)
   redirect(res, next)
 }
 
@@ -257,19 +267,18 @@ function statsData(date: string | null) {
   return { day, customers: db.customersBetween(from, to, bot.HANDOVER_REPLY), orders: db.ordersBetween(from, to), messages: db.messagesBetween(from, to) }
 }
 
+const accountsBack = (res: ServerResponse, msg: string) => redirect(res, `/admin/accounts?msg=${encodeURIComponent(msg)}`)
 const dashBack = (res: ServerResponse, msg: string) => redirect(res, `/admin?msg=${encodeURIComponent(msg)}`)
 
 async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) {
-  const role = sessionRole(req)
-  if (!role) {
+  const me = sessionAccount(req)
+  if (!me) {
     if (req.method === "GET") return redirect(res, `/login?next=${encodeURIComponent(url.pathname + url.search)}`)
     return send(res, 401, "Phiên đăng nhập đã hết, hãy đăng nhập lại", "text/plain; charset=utf-8")
   }
-  if (role === "staff") {
-    staffResponses.add(res)
-    if (MANAGER_PATHS.some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`))) {
-      return send(res, 403, views.errorPage("Trang này chỉ dành cho quản lý. Đăng xuất rồi đăng nhập bằng mật khẩu quản lý."))
-    }
+  viewers.set(res, me)
+  if (me.role === "staff" && ADMIN_PATHS.some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`))) {
+    return send(res, 403, views.errorPage("Trang này chỉ dành cho admin. Đăng xuất rồi đăng nhập bằng tài khoản admin."))
   }
 
   let form = new URLSearchParams()
@@ -478,6 +487,20 @@ async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) 
         listKnowledgeFiles(),
         listPriceServices(),
       ))
+    case "GET /admin/price":
+      return send(res, 200, views.fuelPage(getFuel(), listPriceServices(), dayRange(null).day, url.searchParams.get("msg") ?? ""))
+    case "POST /admin/price/fuel": {
+      const pct: Record<string, number> = {}
+      for (const { code } of listPriceServices()) {
+        const v = Number((form.get(`pct-${code}`) ?? "").replace(",", "."))
+        if (v > 0 && v <= 200) pct[code] = v
+      }
+      const day = (k: string) => (/^\d{4}-\d{2}-\d{2}$/.test(form.get(k) ?? "") ? form.get(k)! : "")
+      const vatRaw = form.get("vat")?.trim()
+      const vat = vatRaw ? Number(vatRaw.replace(",", ".")) : 8
+      setFuel({ pct, from: day("from"), to: day("to"), updated: Date.now(), vat: vat >= 0 && vat <= 20 ? vat : 8 })
+      return redirect(res, `/admin/price?msg=${encodeURIComponent("Đã lưu. Bot dùng mức phụ phí mới từ lần báo giá tiếp theo.")}`)
+    }
     case "POST /admin/price/delete": {
       const code = form.get("code") ?? ""
       return settingsBack(res, deletePriceService(code) ? `Đã xóa bảng giá ${code}. Bot không báo giá dịch vụ này nữa.` : "Không tìm thấy bảng giá cần xóa.")
@@ -529,7 +552,7 @@ async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) 
       const provider = form.get("provider") as ai.Provider
       if (!(provider in ai.PROVIDERS)) return send(res, 400, views.errorPage("Hãng AI không hợp lệ"))
       const key = form.get("key")?.trim() || db.getKv(`ai_key_${provider}`) || (provider === "gemini" ? env.GEMINI_API_KEY ?? "" : "")
-      const cfg = { provider, model: form.get("model")?.trim() ?? "", key }
+      const cfg = { provider, model: form.get("model_custom")?.trim() || form.get("model")?.trim() || ai.PROVIDERS[provider].models[0], key }
       try {
         // Thử trước, chỉ lưu khi model trả lời được để bot đang chạy không bị hỏng vì key/model sai.
         const reply = await ai.generateReply([{ role: "user", text: "Xin chào" } as db.Message], cfg)
@@ -540,6 +563,72 @@ async function handleAdmin(req: IncomingMessage, res: ServerResponse, url: URL) 
       } catch (err) {
         return send(res, 200, aiView("", err instanceof Error ? err.message : String(err)))
       }
+    }
+    case "POST /admin/ai/backup": {
+      const provider = form.get("provider") as ai.Provider
+      if (!(provider in ai.PROVIDERS)) {
+        db.db.prepare("DELETE FROM kv WHERE key IN ('ai_backup_provider', 'ai_backup_model', 'ai_backup_key')").run()
+        return redirect(res, `/admin/ai?msg=${encodeURIComponent("Đã tắt AI dự phòng.")}`)
+      }
+      const keepKey = db.getKv("ai_backup_provider") === provider ? db.getKv("ai_backup_key") : ""
+      const key = form.get("key")?.trim() || keepKey || db.getKv(`ai_key_${provider}`) || (provider === "gemini" ? env.GEMINI_API_KEY ?? "" : "")
+      const cfg = { provider, model: form.get("model_custom")?.trim() || form.get("model")?.trim() || ai.PROVIDERS[provider].models[0], key }
+      try {
+        // Thử trước như model chính: key/model sai thì không lưu, tránh lúc Gemini sập mới phát hiện dự phòng cũng hỏng.
+        const reply = await ai.generateReply([{ role: "user", text: "Xin chào" } as db.Message], cfg)
+        db.setKv("ai_backup_provider", provider)
+        db.setKv("ai_backup_model", cfg.model)
+        // Key dự phòng lưu riêng: Gemini thứ 2 không ghi đè key Gemini của AI chính.
+        if (form.get("key")?.trim()) db.setKv("ai_backup_key", key)
+        else if (!keepKey) db.db.prepare("DELETE FROM kv WHERE key = 'ai_backup_key'").run()
+        return redirect(res, `/admin/ai?msg=${encodeURIComponent(`Đã bật AI dự phòng ${cfg.model}. Model trả lời thử: "${reply.slice(0, 120)}"`)}`)
+      } catch (err) {
+        return send(res, 200, aiView("", `AI dự phòng: ${err instanceof Error ? err.message : String(err)}`))
+      }
+    }
+    case "GET /admin/password":
+      return send(res, 200, views.passwordPage(url.searchParams.get("msg") ?? "", ""))
+    case "POST /admin/password": {
+      const password = form.get("password") ?? ""
+      const error = !db.checkPassword(form.get("current") ?? "", me.pass) ? "Mật khẩu hiện tại chưa đúng."
+        : password.length < 6 ? "Mật khẩu mới tối thiểu 6 ký tự."
+        : password !== form.get("confirm") ? "Hai lần nhập mật khẩu mới không giống nhau."
+        : ""
+      if (error) return send(res, 200, views.passwordPage("", error))
+      db.updateAccount(me.username, me.name, me.role, password)
+      // Đổi mật khẩu làm phiên cũ hết hiệu lực: cấp phiên mới để người đang dùng không bị đăng xuất.
+      const acc = db.getAccount(me.username)!
+      const exp = String(Date.now() + SESSION_MS)
+      setSession(req, res, `${exp}.${acc.username}.${sessionMac(exp, acc)}`, SESSION_MS / 1000)
+      return redirect(res, `/admin/password?msg=${encodeURIComponent("Đã đổi mật khẩu.")}`)
+    }
+    case "GET /admin/accounts":
+      return send(res, 200, views.accountsPage(db.listAccounts(), me.username, url.searchParams.get("msg") ?? ""))
+    case "POST /admin/accounts/add": {
+      const username = (form.get("username") ?? "").trim().toLowerCase()
+      const password = form.get("password") ?? ""
+      if (!USERNAME.test(username)) return accountsBack(res, "Tên đăng nhập 3–30 ký tự, chỉ gồm chữ thường không dấu, số, dấu - hoặc _.")
+      if (password.length < 6) return accountsBack(res, "Mật khẩu tối thiểu 6 ký tự.")
+      if (db.getAccount(username)) return accountsBack(res, `Đã có tài khoản "${username}".`)
+      db.addAccount(username, form.get("name")?.trim() ?? "", password, form.get("role") === "admin" ? "admin" : "staff")
+      return accountsBack(res, `Đã tạo tài khoản "${username}".`)
+    }
+    case "POST /admin/accounts/edit": {
+      const acc = db.getAccount(form.get("username") ?? "")
+      if (!acc) return accountsBack(res, "Tài khoản không còn.")
+      const role = form.get("role") === "admin" ? "admin" : "staff"
+      const password = form.get("password") ?? ""
+      if (password && password.length < 6) return accountsBack(res, "Mật khẩu mới tối thiểu 6 ký tự.")
+      if (acc.role === "admin" && role === "staff" && db.countAdmins() <= 1) return accountsBack(res, "Phải còn ít nhất 1 tài khoản admin.")
+      db.updateAccount(acc.username, form.get("name")?.trim() ?? "", role, password)
+      return accountsBack(res, `Đã lưu tài khoản "${acc.username}"${password ? " và đổi mật khẩu" : ""}.`)
+    }
+    case "POST /admin/accounts/delete": {
+      const acc = db.getAccount(form.get("username") ?? "")
+      if (!acc) return accountsBack(res, "Tài khoản không còn.")
+      if (acc.username === me.username) return accountsBack(res, "Không xóa được tài khoản đang đăng nhập.")
+      db.deleteAccount(acc.username)
+      return accountsBack(res, `Đã xóa tài khoản "${acc.username}".`)
     }
     case "GET /admin/zalo/connect":
       return redirect(res, zalo.authUrl())
@@ -564,10 +653,10 @@ createServer(async (req, res) => {
       return redirect(res, "/login")
     }
     if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) return await handleAdmin(req, res, url)
-    // Ảnh trên tin "chia sẻ số điện thoại" (Zalo tải ảnh qua đường link công khai).
-    if (url.pathname === "/chia-se-sdt.png") {
+    // Ảnh banner trên tin xin số điện thoại "Chốt cước đơn hàng" (Zalo tải ảnh qua đường link công khai).
+    if (url.pathname === "/chot-cuoc-don-hang.png" || url.pathname === "/chia-se-sdt.png") {
       res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" })
-      return res.end(await readFile("public/chia-se-sdt.png"))
+      return res.end(await readFile("public/chot-cuoc-don-hang.png"))
     }
     // File xác thực tên miền do Zalo cấp: đặt vào thư mục public/
     const verifier = url.pathname.match(/^\/(zalo_verifier[\w-]+\.html)$/)

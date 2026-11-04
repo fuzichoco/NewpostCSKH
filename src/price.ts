@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { getKv, setKv } from "./db.ts"
 import { listKnowledgeFiles, xlsxSheets } from "./import.ts"
 
 /** Bảng giá từng dịch vụ, đọc từ file Excel giá công bố; code tự tra giá thay vì để AI đọc bảng (AI hay tra nhầm dòng). */
@@ -40,14 +41,21 @@ export function parsePriceWorkbook(fileName: string, buf: Buffer): PriceService 
   return { code, name: NAMES[code] ?? code, file: fileName, updated: Date.now(), doc: doc && table(doc), goods: table(goods) }
 }
 
+// Bảng giá chỉ đổi khi admin nạp / xóa (savePriceService, deletePriceService): giữ trong bộ nhớ, khỏi đọc lại file mỗi câu trả lời.
+// Theo thư mục đang chạy (test đổi thư mục làm việc).
+let cache: { cwd: string; list: PriceService[] } | null = null
+
 export function listPriceServices(): PriceService[] {
-  if (!existsSync(PRICE_DIR)) return []
-  return readdirSync(PRICE_DIR).filter((f) => f.endsWith(".json")).sort()
+  if (cache?.cwd === process.cwd()) return cache.list
+  const list = !existsSync(PRICE_DIR) ? [] : readdirSync(PRICE_DIR).filter((f) => f.endsWith(".json")).sort()
     .map((f) => JSON.parse(readFileSync(`${PRICE_DIR}/${f}`, "utf8")) as PriceService)
+  cache = { cwd: process.cwd(), list }
+  return list
 }
 
 /** Nạp lại bảng giá cùng dịch vụ thì thay bản cũ. */
 export function savePriceService(s: PriceService) {
+  cache = null
   mkdirSync(PRICE_DIR, { recursive: true })
   const path = `${PRICE_DIR}/${s.code}.json`
   const replaced = existsSync(path)
@@ -58,6 +66,7 @@ export function savePriceService(s: PriceService) {
 export function deletePriceService(code: string) {
   if (!listPriceServices().some((s) => s.code === code)) return false
   rmSync(`${PRICE_DIR}/${code}.json`)
+  cache = null
   return true
 }
 
@@ -78,10 +87,22 @@ function tablePrice(t: Table, zone: number, w: number): number | null {
   return band ? Math.round(band.prices[zone] * kg) : null
 }
 
-export type Quote = { code: string; name: string; zone: string; time: string; price: number }
+// --- Phụ phí xăng dầu: % cộng trên cước công bố, mỗi dịch vụ đã nạp bảng giá một mức; admin nhập ở trang Phụ phí xăng dầu. ---
+/** pct: % theo mã dịch vụ (SDHL, UPS…). from/to: khoảng ngày hãng thông báo (YYYY-MM-DD), chỉ để nhắc cập nhật –
+ *  quá hạn bot vẫn dùng mức cuối cùng (báo thiếu phụ phí khiến khách thấy giá rẻ hơn thực tế nhiều). */
+export type Fuel = { pct: Record<string, number>; from: string; to: string; updated: number; vat?: number }
+export const getFuel = (): Fuel | null => JSON.parse(getKv("fuel_surcharge") ?? "null")
+export const setFuel = (f: Fuel) => setKv("fuel_surcharge", JSON.stringify(f))
+const fuelPct = (code: string, fuel: Fuel | null) => fuel?.pct[code] || null
+export const pctText = (n: number) => `${String(n).replace(".", ",")}%`
+/** VAT cộng vào giá báo khách (mặc định 8%, admin đổi ở trang Phụ phí xăng dầu). */
+export const vatPct = (fuel = getFuel()) => fuel?.vat ?? 8
+
+/** price: giá báo khách (đã cộng phụ phí xăng dầu nếu có); base: cước theo bảng giá công bố. */
+export type Quote = { code: string; name: string; zone: string; time: string; price: number; base: number; fuel: number | null }
 
 /** Giá một kiện theo mọi dịch vụ đi nước đó, rẻ nhất trước. tooHeavy: dịch vụ đi nước đó nhưng kiện nặng quá bảng giá. */
-export function quote(country: string, kg: number, dims: number[] | undefined, isDoc: boolean, services = listPriceServices()) {
+export function quote(country: string, kg: number, dims: number[] | undefined, isDoc: boolean, services = listPriceServices(), fuel = getFuel()) {
   const code = ALIAS[country.toUpperCase()] ?? country.toUpperCase()
   const weight = chargeableWeight(kg, dims)
   const quotes: Quote[] = []
@@ -93,7 +114,11 @@ export function quote(country: string, kg: number, dims: number[] | undefined, i
     if (zone < 0) continue
     const price = tablePrice(t, zone, weight)
     if (price == null) tooHeavy.push(s.name)
-    else quotes.push({ code: s.code, name: s.name, zone: t.zones[zone].name, time: t.zones[zone].time, price })
+    else {
+      const pct = fuelPct(s.code, fuel)
+      const total = pct ? Math.round(price * (1 + pct / 100)) : price
+      quotes.push({ code: s.code, name: s.name, zone: t.zones[zone].name, time: t.zones[zone].time, price: total, base: price, fuel: pct })
+    }
   }
   return { country: code, weight, quotes: quotes.sort((a, b) => a.price - b.price), tooHeavy }
 }
@@ -109,21 +134,96 @@ const ITEM_SURCHARGE_SERVICES = ["CTQ", "CTU"]
 /** Đọc bảng "PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG" (| STT | Mặt hàng | Phụ thu | Ghi chú |) trong file kiến thức đã nạp:
  *  nạp file mới là bảng mới có hiệu lực, không phải sửa code. */
 export function itemSurcharges(files = listKnowledgeFiles()): ItemSurcharge[] {
+  // Cụm chữ này có thể xuất hiện ở nhiều chỗ (nhắc tới trong câu văn): lấy chỗ đầu tiên thật sự có bảng.
+  const clean = (x: string) => x.replace(/\*\*/g, "").trim()
   for (const f of files) {
-    const at = f.text.search(/PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG/i)
-    if (at < 0) continue
-    const section = f.text.slice(at).split(/\n#{1,2} /)[0]
-    const clean = (x: string) => x.replace(/\*\*/g, "").trim()
-    return [...section.matchAll(/^\|\s*(\d+)\s*\|([^|]+)\|([^|]+)\|([^|]*)\|/gm)]
-      .map((m) => ({ no: m[1], item: clean(m[2]), fee: clean(m[3]), note: clean(m[4]) }))
+    for (const at of [...f.text.matchAll(/PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG/gi)].map((m) => m.index)) {
+      const section = f.text.slice(at).split(/\n#{1,2} /)[0]
+      const rows = [...section.matchAll(/^\|\s*(\d+)\s*\|([^|]+)\|([^|]+)\|([^|]*)\|/gm)]
+        .map((m) => ({ no: m[1], item: clean(m[2]), fee: clean(m[3]), note: clean(m[4]) }))
+      if (rows.length) return rows
+    }
   }
   return []
+}
+
+/** Tiền phụ thu một mặt hàng cho 1 kiện. Ghi chú có bậc cân ("1–5 kg: 300k; 5–22 kg: 500k") thì lấy đúng bậc;
+ *  "đ/kg" nhân cân nặng; "đ/kiện", "đ/lô" tính 1 lần; tính theo chiếc/cái/máy… (chưa biết số lượng) hoặc có khoảng giá
+ *  thì lấy mức thấp nhất, from = true để báo khách "từ". Không đọc được số tiền thì null (nhân viên xác nhận). */
+export function itemFee(x: ItemSurcharge, kg: number): { amount: number; from: boolean } | null {
+  const tiers = [...x.note.matchAll(/(\d+(?:[.,]\d+)?)\s*[–-]\s*(\d+(?:[.,]\d+)?)\s*kg:\s*(\d+)k/gi)]
+  const tier = tiers.find((m) => kg <= Number(m[2].replace(",", ".")) + 1e-9)
+  if (tier) return { amount: Number(tier[3]) * 1000, from: false }
+  const m = x.fee.match(/([\d.]+)(?:\s*[–-]\s*[\d.]+)?\s*đ\s*\/\s*([^\s;,+]+)/)
+  if (!m) return null
+  const unit = m[2].toLowerCase()
+  const amount = Number(m[1].replace(/\./g, ""))
+  return {
+    amount: unit === "kg" ? Math.round(amount * kg) : amount,
+    from: /\d\s*[–-]\s*\d/.test(x.fee) || /[+;]/.test(x.fee) || !["kg", "kiện", "lô"].includes(unit),
+  }
+}
+
+const shortItem = (x: ItemSurcharge) => x.item.split(/[;,(]/)[0].trim().toLowerCase()
+
+/** Giá đầy đủ một dịch vụ cho 1 kiện: cước + phụ phí xăng dầu + phụ thu mặt hàng (chỉ chuyên tuyến) + VAT. */
+function fullPrice(q: Quote, items: ItemSurcharge[], weight: number, vat: number) {
+  const fees = ITEM_SURCHARGE_SERVICES.includes(q.code) ? items.map((x) => ({ x, fee: itemFee(x, weight) })) : []
+  const known = fees.filter((f) => f.fee).map((f) => ({ label: `phụ thu ${shortItem(f.x)} ${f.fee!.from ? "từ " : ""}${money(f.fee!.amount)}`, ...f.fee! }))
+  const beforeVat = q.price + known.reduce((a, f) => a + f.amount, 0)
+  const vatAmount = Math.round((beforeVat * vat) / 100)
+  const parts = [`cước ${money(q.base)}`, ...(q.fuel ? [`phụ phí xăng dầu ${pctText(q.fuel)} ${money(q.price - q.base)}`] : []),
+    ...known.map((f) => f.label), ...(vat ? [`VAT ${pctText(vat)} ${money(vatAmount)}`] : [])]
+  return {
+    total: beforeVat + vatAmount,
+    from: known.some((f) => f.from),
+    detail: parts.join(" + "),
+    unknown: fees.filter((f) => !f.fee).map((f) => f.x),
+  }
+}
+
+/** Phụ phí xăng dầu đổi theo tuần: câu nhắc giá báo hôm nay chỉ giữ đến hết khoảng ngày admin nhập. */
+function fuelValidity(fuel: Fuel | null) {
+  if (!fuel || !Object.values(fuel.pct).some(Boolean)) return ""
+  const to = fuel.to ? fuel.to.split("-").reverse().join("/") : ""
+  return `Giá trên áp dụng${to ? ` đến hết ngày ${to}` : " trong tuần này"}. Phụ phí xăng dầu do hãng điều chỉnh theo tuần, nên nếu anh/chị chốt gửi sau thời gian này, giá có thể cao hoặc thấp hơn một chút; em sẽ báo lại giá theo mức mới khi anh/chị chốt đơn ạ.`
+}
+
+const BATTERY_BANNED = ["UPS", "SDHL"]
+// Từ trong tên nhóm mà khách hay dùng với nghĩa khác ("báo giá", "giấy tờ" = tài liệu): không dùng để nhận nhóm.
+const ITEM_STOP_WORDS = new Set(["báo", "giấy"])
+// Thiết bị điện tử luôn có pin: khách nói tên thiết bị thì tính vào nhóm pin.
+const BATTERY_WORDS = /điện thoại|iphone|smartphone|laptop|macbook|máy tính bảng|ipad|tai nghe|airpods|đồng hồ thông minh|smartwatch|apple watch|sạc dự phòng/i
+
+/** Nhóm phụ thu mặt hàng khách nhắc tới trong tin nhắn (so tên nhóm trong bảng, bỏ phần ví dụ trong ngoặc).
+ *  Model rẻ hay quên ghi STT mặt hàng vào thẻ TINH_GIA: code tự bổ sung để không sót phụ thu. */
+export function itemsInText(text: string, surcharges = itemSurcharges()): string[] {
+  const t = ` ${text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ")} `
+  return surcharges
+    .filter((x) => {
+      const words = x.item.replace(/\([^)]*\)/g, "").split(/[;,…]/).map((w) => w.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()).filter((w) => w.length >= 3 && !ITEM_STOP_WORDS.has(w))
+      return words.some((w) => t.includes(` ${w} `)) || (/^pin\b/i.test(x.item) && BATTERY_WORDS.test(text))
+    })
+    .map((x) => x.no)
+}
+
+/** Thêm STT mặt hàng tìm được trong tin khách vào các thẻ TINH_GIA hàng hóa (giữ STT AI đã ghi). */
+export function withItems(reply: string, customerText: string, surcharges = itemSurcharges()) {
+  const found = itemsInText(customerText, surcharges)
+  if (!found.length) return reply
+  return reply.replace(PRICE_TAG, (tag, body: string) => {
+    const f = body.split("|").map((x) => x.trim())
+    if (/tai|tài|doc/i.test(f[3] ?? "")) return tag
+    const nos = [...new Set([...(f[4]?.match(/\d+/g) ?? []), ...found])]
+    return `[TINH_GIA: ${[f[0] ?? "", f[1] ?? "", f[2] || "-", f[3] || "hang", nos.join(",")].join(" | ")}]`
+  })
 }
 
 /** Đổi các thẻ [TINH_GIA: JP | 3 | 40x30x30 | hang | 7] (mỗi kiện một thẻ) thành kết quả tính giá cho AI viết câu trả lời.
  *  Ô cuối là STT mặt hàng trong bảng phụ phí hải quan theo mặt hàng (hoặc -). */
 export function priceResult(reply: string, services = listPriceServices(), surcharges = itemSurcharges()) {
   const parcels = parseParcels(reply, services, surcharges)
+  const validity = fuelValidity(getFuel())
   // Model rẻ hay lặp lại thẻ TINH_GIA thay vì viết câu báo giá: nói rõ bước tính đã xong.
   const lines = [
     "",
@@ -133,26 +233,28 @@ export function priceResult(reply: string, services = listPriceServices(), surch
   ]
   parcels.forEach((p, i) => {
     lines.push(`Kiện ${i + 1}: mã nước ${p.country}, ${p.isDoc ? "tài liệu" : "hàng hóa"}, cân thực ${p.kg} kg, kích thước ${p.hasDims ? p.size : "chưa có"}, trọng lượng tính cước ${String(p.weight).replace(".", ",")} kg.`)
-    for (const q of p.quotes) lines.push(`- ${q.name}: ${money(q.price)}${q.time ? ` (thời gian ${q.time})` : ""}`)
-    if (!p.quotes.length && !p.tooHeavy.length) lines.push("- Không dịch vụ nào có giá đi mã nước này.")
-    if (p.tooHeavy.length) lines.push(`- Quá mức cân của bảng giá (cần nhân viên báo giá): ${p.tooHeavy.join(", ")}`)
-    const affected = p.quotes.filter((q) => ITEM_SURCHARGE_SERVICES.includes(q.code)).map((q) => q.name)
-    if (p.items.length && affected.length) {
-      lines.push(`- Phụ phí hải quan theo mặt hàng, CHỈ cộng thêm cho ${affected.join(", ")} (giá trên chưa gồm):`)
-      for (const x of p.items) lines.push(`  + ${x.item}: ${x.fee}${x.note ? ` (${x.note})` : ""}`)
+    for (const l of p.lines) {
+      lines.push(`- ${l.q.name}: TỔNG ${l.from ? "TỪ " : ""}${money(l.total)} = ${l.detail}${l.q.time ? ` (thời gian ${l.q.time})` : ""}`)
+      for (const x of l.unknown) lines.push(`  + Chưa cộng phụ thu ${x.item}: ${x.fee}${x.note ? ` (${x.note})` : ""} – nhân viên xác nhận`)
     }
+    if (!p.lines.length && !p.tooHeavy.length) lines.push("- Không dịch vụ nào có giá đi mã nước này.")
+    if (p.tooHeavy.length) lines.push(`- Quá mức cân của bảng giá (cần nhân viên báo giá): ${p.tooHeavy.join(", ")}`)
   })
   if (parcels.length > 1) {
     const totals = new Map<string, number[]>()
-    for (const p of parcels) for (const q of p.quotes) totals.set(q.name, [...(totals.get(q.name) ?? []), q.price])
+    for (const p of parcels) for (const l of p.lines) totals.set(l.q.name, [...(totals.get(l.q.name) ?? []), l.total])
     const all = [...totals].filter(([, v]) => v.length === parcels.length).map(([n, v]) => [n, v.reduce((a, b) => a + b, 0)] as const)
     if (all.length) lines.push("Tổng các kiện:", ...all.sort((a, b) => a[1] - b[1]).map(([n, t]) => `- ${n}: ${money(t)}`))
   }
   lines.push(
-    "Cách báo: báo tối đa 3 dịch vụ rẻ nhất ở trên (khách hỏi hãng nào thì báo hãng đó), kèm thời gian nếu có; ghi rõ giá công bố tham khảo,",
-    "chưa gồm phụ phí phát sinh và thuế nhập khẩu tại nước đến. Kích thước \"chưa có\" thì nói giá có thể thay đổi khi cân đo thực tế.",
-    "Có dòng phụ phí hải quan theo mặt hàng: ghi rõ mức phụ thu đó ngay cạnh giá của dịch vụ bị áp (đúng chữ và số ở trên, KHÔNG tự nhân ra tổng),",
-    "dịch vụ khác không có phụ phí này. Ghi chú \"kiểm tra từng trường hợp\" thì nói nhân viên sẽ xác nhận mức phụ thu.",
+    "Cách báo: báo tối đa 3 dịch vụ rẻ nhất ở trên (khách hỏi hãng nào thì báo hãng đó). Mỗi dịch vụ ghi con số TỔNG và chi tiết từng khoản",
+    "(cước, phụ phí xăng dầu, phụ thu mặt hàng nếu có, VAT) đúng như sau dấu =, kèm thời gian nếu có. Có chữ \"TỪ\" thì nói \"từ\" và nhân viên xác nhận mức chính xác.",
+    "Giá TỔNG đã gồm VAT; dòng có \"phụ phí xăng dầu\" là đã gồm phụ phí xăng dầu, dòng không có thì nói chưa gồm phụ phí xăng dầu.",
+    "KHÔNG nói \"chưa gồm VAT\" (quy tắc này THAY cho các câu về VAT / phụ phí trong kiến thức).",
+    "Chỉ nói chưa gồm thuế nhập khẩu tại nước đến và phụ phí phát sinh khác. Kích thước \"chưa có\" thì nói giá có thể thay đổi khi cân đo thực tế.",
+    ...(validity ? [`Cuối câu báo giá PHẢI có câu này (giữ nguyên ý): "${validity}"`] : []),
+    "Khách hỏi vì sao giá khác lần báo trước (tuần trước rẻ hơn / đắt hơn): giải thích lịch sự là phụ phí xăng dầu của hãng điều chỉnh theo tuần,",
+    "giá mới nhất là giá ở trên, cước chính theo bảng giá công bố không đổi.",
     "Không dịch vụ nào có giá hoặc quá mức cân: trả lời đúng một dòng [CHUYEN_NHAN_VIEN]. KHÔNG viết thẻ [TINH_GIA] nữa.",
   )
   return lines.join("\n")
@@ -161,26 +263,36 @@ export function priceResult(reply: string, services = listPriceServices(), surch
 /** Câu báo giá code tự viết (3 dịch vụ rẻ nhất mỗi kiện) khi AI không viết được câu trả lời sau khi đã tính giá.
  *  Không kiện nào có giá thì trả về "". */
 export function priceFallback(reply: string, services = listPriceServices(), surcharges = itemSurcharges()) {
-  const parcels = parseParcels(reply, services, surcharges).filter((p) => p.quotes.length)
+  const parcels = parseParcels(reply, services, surcharges).filter((p) => p.lines.length)
   if (!parcels.length) return ""
   const lines: string[] = []
   parcels.forEach((p, i) => {
     lines.push(`${parcels.length > 1 ? `Kiện ${i + 1}: ` : "Dạ "}hàng đi mã nước ${p.country}, trọng lượng tính cước ${String(p.weight).replace(".", ",")} kg:`)
-    for (const q of p.quotes.slice(0, 3)) {
-      const extra = p.items.length && ITEM_SURCHARGE_SERVICES.includes(q.code) ? ` (cộng phụ thu hải quan: ${p.items.map((x) => x.fee).join("; ")})` : ""
-      lines.push(`- ${q.name}: ${money(q.price)}${q.time ? `, thời gian ${q.time}` : ""}${extra}`)
+    for (const l of p.lines.slice(0, 3)) {
+      lines.push(`- ${l.q.name}: ${l.from ? "từ " : ""}${money(l.total)} (${l.detail})${l.q.time ? `, thời gian ${l.q.time}` : ""}`)
     }
   })
-  lines.push("Giá trên là cước theo bảng giá công bố, chưa gồm phụ phí xăng dầu, VAT và thuế nhập khẩu tại nước đến. Nhân viên sẽ báo tổng chi phí chính xác khi cân đo thực tế ạ.")
+  const shown = parcels.flatMap((p) => p.lines.slice(0, 3))
+  const fuelNote = shown.every((l) => l.q.fuel) ? "đã gồm phụ phí xăng dầu và VAT" : shown.some((l) => l.q.fuel) ? "đã gồm VAT, phụ phí xăng dầu đã cộng với dịch vụ có ghi" : "đã gồm VAT, chưa gồm phụ phí xăng dầu"
+  lines.push(`Giá trên theo bảng giá công bố, ${fuelNote}, chưa gồm thuế nhập khẩu tại nước đến. Nhân viên sẽ xác nhận tổng chi phí chính xác khi cân đo thực tế ạ.`)
+  const validity = fuelValidity(getFuel())
+  if (validity) lines.push(validity)
   return lines.join("\n")
 }
 
 function parseParcels(reply: string, services: PriceService[], surcharges: ItemSurcharge[]) {
+  const fuel = getFuel()
+  const vat = vatPct(fuel)
   return [...reply.matchAll(PRICE_TAG)].map((m) => {
     const [country = "", kg = "", size = "", kind = "", item = ""] = m[1].split("|").map((x) => x.trim())
     const dims = size.match(/\d+(?:[.,]\d+)?/g)?.map((d) => Number(d.replace(",", ".")))
     const isDoc = /tai|tài|doc/i.test(kind)
-    const items = (item.match(/\d+/g) ?? []).map((no) => surcharges.find((x) => x.no === no)).filter((x): x is ItemSurcharge => !!x)
-    return { ...quote(country, Number(kg.replace(",", ".")) || 0, dims?.length === 3 ? dims : undefined, isDoc, services), size, isDoc, kg, hasDims: dims?.length === 3, items }
+    const items = isDoc ? [] : (item.match(/\d+/g) ?? []).map((no) => surcharges.find((x) => x.no === no)).filter((x): x is ItemSurcharge => !!x)
+    const q = quote(country, Number(kg.replace(",", ".")) || 0, dims?.length === 3 ? dims : undefined, isDoc, services, fuel)
+    // Hàng có pin: UPS cấm "pin và sản phẩm chứa pin", DHL qua Singapore không nhận hàng có pin (kiến thức file 06) – không báo 2 dịch vụ này.
+    const battery = items.some((x) => /^pin\b/i.test(x.item))
+    const lines = q.quotes.filter((x) => !(battery && BATTERY_BANNED.includes(x.code)))
+      .map((x) => ({ q: x, ...fullPrice(x, items, q.weight, vat) })).sort((a, b) => a.total - b.total)
+    return { ...q, lines, size, isDoc, kg, hasDims: dims?.length === 3, items }
   })
 }

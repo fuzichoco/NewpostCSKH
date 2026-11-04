@@ -54,10 +54,11 @@ export async function sendTelegram(text: string, token = db.getKv("tg_token"), c
 
 /** Gửi tới các kênh đã cài; kênh nào lỗi chỉ ghi log, không chặn kênh khác. Trả về danh sách lỗi.
  *  branch: chi nhánh của khách – chỉ báo nhân viên Zalo phụ trách chi nhánh đó (chưa biết thì báo tất cả).
- *  telegram / zalo = false: bỏ kênh đó. */
-export async function notifyStaff(text: string, opts: { branch?: string | null; telegram?: boolean; zalo?: boolean } = {}): Promise<string[]> {
+ *  telegram / zalo = false: bỏ kênh đó. zaloExtra: dòng chỉ thêm vào tin Zalo (link trang quản trị; Telegram không gắn link). */
+export async function notifyStaff(text: string, opts: { branch?: string | null; telegram?: boolean; zalo?: boolean; zaloExtra?: string } = {}): Promise<string[]> {
   const targets = opts.zalo === false ? [] : staffList().filter((s) => !opts.branch || s.branch === "all" || s.branch === opts.branch)
-  const jobs = [opts.telegram === false ? Promise.resolve() : sendTelegram(text), ...targets.map((s) => zalo.sendText(s.id, text))]
+  const zaloText = opts.zaloExtra ? `${text}\n${opts.zaloExtra}` : text
+  const jobs = [opts.telegram === false ? Promise.resolve() : sendTelegram(text), ...targets.map((s) => zalo.sendText(s.id, zaloText))]
   const errors: string[] = []
   for (const r of await Promise.allSettled(jobs)) {
     if (r.status === "rejected") errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason))

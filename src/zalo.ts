@@ -133,9 +133,10 @@ export async function requestUserInfo(userId: string) {
           payload: {
             template_type: "request_user_info",
             elements: [{
-              title: "Chia sẻ số điện thoại với NewPost Global",
-              subtitle: "Bấm Chia sẻ để nhân viên gọi lại xác nhận đơn và tư vấn cho anh/chị, không cần gõ số.",
-              image_url: `${env.PUBLIC_URL}/chia-se-sdt.png`,
+              // Gọi là "Chốt cước đơn hàng" thay vì "chia sẻ số điện thoại": khách ít e ngại, không nghĩ là lừa đảo.
+              title: "Chốt cước đơn hàng – NewPost Global",
+              subtitle: "Bấm nút bên dưới để gửi số điện thoại qua Zalo. Nhân viên NewPost gọi lại xác nhận cước và hẹn lấy hàng tận nơi.",
+              image_url: `${env.PUBLIC_URL}/chot-cuoc-don-hang.png`,
             }],
           },
         },

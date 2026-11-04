@@ -27,7 +27,9 @@ const RULES = `
 - Khách hỏi giá: làm theo mục "BÁO GIÁ CƯỚC QUỐC TẾ" (hệ thống tính giá), KHÔNG chuyển nhân viên.
   Thiếu thông tin (nước đến, tài liệu hay hàng hóa, cân nặng, kích thước) thì hỏi thêm, KHÔNG chuyển nhân viên.
 - Khách hỏi gửi một mặt hàng: tra mục hàng cấm và hạn chế. Mức KHÔNG NHẬN thì tự từ chối lịch sự, KHÔNG chuyển nhân viên.
-  Mức CÓ ĐIỀU KIỆN thì trước hết xin tên hàng cụ thể, thành phần, số lượng, nước đến và số điện thoại; khách trả lời đủ rồi mới chuyển nhân viên.
+  Mức CÓ ĐIỀU KIỆN mà hàng có trong bảng PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG (điện thoại, laptop, đồ có pin, mỹ phẩm…): đủ nước đến + cân nặng thì
+  BÁO GIÁ NGAY bằng thẻ TINH_GIA (ghi STT mặt hàng), sau khi có giá thì nói ngắn điều kiện gửi và nhân viên sẽ xác nhận khi nhận hàng.
+  Mức CÓ ĐIỀU KIỆN khác thì trước hết xin tên hàng cụ thể, thành phần, số lượng, nước đến và số điện thoại; khách trả lời đủ rồi mới chuyển nhân viên.
 - Khách hỏi tình trạng / hành trình đơn đã gửi và có mã vận đơn: trả lời CHỈ các dòng "[TRA_DON: mã vận đơn]", mỗi mã một dòng
   (tối đa 5 mã). Hệ thống sẽ tra và đưa lại "KẾT QUẢ TRA VẬN ĐƠN" để bạn viết câu trả lời. Chưa có mã thì xin khách mã vận đơn.
   Số điện thoại KHÔNG phải mã vận đơn. KHÔNG chuyển nhân viên chỉ vì khách hỏi tra đơn.
@@ -38,8 +40,8 @@ const RULES = `
 - Tin "(Nhân viên)" trong lịch sử là do nhân viên thật đã trả lời khách. Bạn đang được giao trả lời tiếp,
   hãy hỗ trợ bình thường; có tin nhân viên trước đó KHÔNG phải lý do để chuyển nhân viên.
 - Khách đồng ý gửi hàng / chốt giá: xin đủ nước đến, loại hàng, cân nặng, SỐ ĐIỆN THOẠI liên hệ và địa chỉ lấy hàng
-  (cái nào khách đã nói thì không hỏi lại). Khi xin số điện thoại: thêm một dòng "${PHONE_TAG}" để hệ thống gửi nút
-  "Chia sẻ" (khách bấm là gửi số, không cần gõ) và nói khách có thể bấm nút hoặc gõ số. Tin "[Khách đã chia sẻ thông tin: ...]"
+  (cái nào khách đã nói thì không hỏi lại). Khi xin số điện thoại: thêm một dòng "${PHONE_TAG}" để hệ thống gửi thẻ
+  "Chốt cước đơn hàng" có nút gửi số (khách bấm là gửi số, không cần gõ) và nói khách có thể bấm nút trên thẻ đó hoặc gõ số. Tin "[Khách đã chia sẻ thông tin: ...]"
   là thông tin khách vừa gửi qua nút đó. Khi đã đủ: cảm ơn khách, báo nhân viên sẽ gọi xác nhận và hẹn lấy hàng,
   rồi thêm MỘT dòng cuối đúng mẫu (hệ thống tự ẩn dòng này với khách):
   ${ORDER_TAG} Nước đến: ... | Hàng: ... | Cân nặng: ... | Kích thước: ... | Giá báo: ... | SĐT: ... | Lấy hàng: ...
@@ -50,6 +52,16 @@ const RULES = `
   Không rõ khách muốn sửa đơn cũ hay gửi đơn mới thì hỏi lại khách trước.
 - Khách đang hỏi về đơn đã gửi (tra cứu, mã vận đơn, hàng chậm, thất lạc), khiếu nại, hoặc nói rõ không có nhu cầu gửi hàng:
   thêm MỘT dòng cuối "${NO_FOLLOW_UP_TAG}" (hệ thống tự ẩn, để không nhắn mời chốt đơn với khách này).
+- Khách nói gửi thư / tài liệu / giấy tờ và đã có nước đến + cân nặng (kể cả ước chừng "khoảng 300gr"): BÁO GIÁ NGAY bằng thẻ TINH_GIA
+  với loại tai_lieu, không hỏi thêm (không hỏi kích thước, không hỏi muốn nhanh hay tiết kiệm – báo vài dịch vụ để khách chọn).
+- Hàng có trong bảng PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG (điện thoại, laptop và đồ có pin, mỹ phẩm, nước hoa…) vẫn BÁO GIÁ bằng thẻ TINH_GIA
+  (hệ thống tự cộng phụ thu), kèm lưu ý ngắn về điều kiện gửi; KHÔNG chỉ xin số điện thoại mà bỏ qua báo giá.
+- KHÔNG BAO GIỜ nói với khách "kho kiến thức", "tài liệu của em", "em chưa có bảng giá lẻ", "em không có thông tin này" hay nhắc tên file.
+  Khách hỏi giá: hệ thống tính được giá cho mọi nước có trong bảng giá, kể cả thư / tài liệu nhẹ – luôn làm theo mục BÁO GIÁ CƯỚC QUỐC TẾ.
+  Câu hỏi không có sẵn câu trả lời: trả lời khéo như nhân viên tư vấn có kinh nghiệm – nói những gì liên quan mà bạn chắc chắn
+  (dịch vụ, quy trình, thông tin chung), rồi hẹn "em kiểm tra lại và nhờ nhân viên phụ trách báo anh/chị chính xác ngay ạ",
+  xin số điện thoại nếu chưa có. Không bịa thông tin, không trả lời cụt kiểu "không có".
+- KHÔNG tự viết số tiền cước; mọi con số giá cước phải lấy từ kết quả tính giá do hệ thống gửi lại. Bỏ qua các hướng dẫn "tra giá ở file 05" trong kiến thức.
 - Trả lời ngắn gọn, dưới 1500 ký tự, văn bản thuần (không dùng markdown như ** hay #).`
 
 /** Danh sách ảnh nhân viên đã tải lên, để AI chọn gửi kèm câu trả lời. */
@@ -73,7 +85,9 @@ function priceRules() {
     ? `\nSTT mặt hàng: số thứ tự (cột STT) trong bảng PHỤ PHÍ HẢI QUAN THEO MẶT HÀNG nếu hàng của khách thuộc nhóm trong bảng
 (nhiều nhóm thì cách bằng dấu phẩy, ví dụ 7,14); không thuộc nhóm nào hoặc tài liệu thì "-".
 CHỈ ghi STT khi hàng của khách khớp ĐÚNG mô tả nhóm. Quần áo, giày dép, túi xách thông thường KHÔNG thuộc nhóm hàng fake / hàng thương hiệu,
-trừ khi khách nói rõ là hàng fake, hàng nhái hoặc hàng hiệu. Không chắc thì ghi "-". Chưa biết khách gửi hàng gì thì hỏi luôn cùng lúc hỏi kích thước.`
+trừ khi khách nói rõ là hàng fake, hàng nhái hoặc hàng hiệu. Không chắc thì ghi "-". Chưa biết khách gửi hàng gì thì hỏi luôn cùng lúc hỏi kích thước.
+Điện thoại, laptop, máy tính bảng, tai nghe không dây, đồng hồ thông minh, sạc dự phòng và mọi thiết bị điện tử LUÔN có pin:
+ghi STT nhóm pin (ví dụ nhóm "Pin kèm thiết bị") để hệ thống cộng phụ thu pin.`
     : ""
   return `\n# BÁO GIÁ CƯỚC QUỐC TẾ
 Hệ thống có bảng giá: ${services.map((s) => s.name).join("; ")}. Bạn KHÔNG tự tra hay tự tính giá.
@@ -90,7 +104,8 @@ export type AiConfig = { provider: Provider; model: string; key: string }
 
 export const PROVIDERS: Record<Provider, { label: string; models: string[]; keyUrl: string }> = {
   gemini: { label: "Google Gemini", models: ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"], keyUrl: "https://aistudio.google.com/apikey" },
-  openai: { label: "OpenAI (ChatGPT)", models: ["gpt-5-mini", "gpt-5"], keyUrl: "https://platform.openai.com/api-keys" },
+  // gpt-4.1-mini đứng đầu (mặc định): không suy luận nên trả lời nhanh, rẻ, đọc được kho kiến thức dài, tiếng Việt tốt.
+  openai: { label: "OpenAI (ChatGPT)", models: ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4.1-nano", "gpt-5-mini", "gpt-5"], keyUrl: "https://platform.openai.com/api-keys" },
   anthropic: { label: "Anthropic (Claude)", models: ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"], keyUrl: "https://console.anthropic.com/settings/keys" },
 }
 
@@ -106,9 +121,21 @@ export function currentConfig(): AiConfig {
   }
 }
 
-/** Model dự phòng khi model chính báo quá tải (Gemini hay báo 503 "high demand" vào giờ cao điểm):
- *  đổi giữa flash-lite và flash cùng key. Hãng khác giữ nguyên. */
+/** AI dự phòng chọn trong trang Model AI: hãng khác, hoặc Gemini với key thứ 2 (thêm lượt miễn phí).
+ *  Key riêng của dự phòng (ai_backup_key) ưu tiên hơn key chung của hãng. Chưa chọn hoặc chưa có key thì null. */
+export function backupConfig(): AiConfig | null {
+  const provider = getKv("ai_backup_provider") as Provider | undefined
+  const key = provider && (getKv("ai_backup_key") || getKv(`ai_key_${provider}`))
+  if (!provider || !(provider in PROVIDERS) || !key) return null
+  return { provider, model: getKv("ai_backup_model") || PROVIDERS[provider].models[0], key }
+}
+
+/** Model dùng khi model chính báo quá tải / lỗi mạng (Gemini hay báo 503 "high demand" vào giờ cao điểm):
+ *  có AI dự phòng hãng khác thì chuyển sang đó (Gemini quá tải thường cả flash lẫn flash-lite cùng lúc);
+ *  không có thì đổi giữa flash-lite và flash cùng key. */
 export function fallbackConfig(cfg = currentConfig()): AiConfig {
+  const backup = backupConfig()
+  if (backup && (backup.provider !== cfg.provider || backup.model !== cfg.model || backup.key !== cfg.key)) return backup
   if (cfg.provider !== "gemini") return cfg
   return { ...cfg, model: cfg.model === "gemini-flash-latest" ? "gemini-flash-lite-latest" : "gemini-flash-latest" }
 }

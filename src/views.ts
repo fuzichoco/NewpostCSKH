@@ -1,8 +1,8 @@
-import type { DayCustomer, Image, Message, Order, User, UserRow, ZnsJob, ZnsStatus } from "./db.ts"
+import type { Account, DayCustomer, Image, Message, Order, User, UserRow, ZnsJob, ZnsStatus } from "./db.ts"
 import { ENABLED as ZNS_ENABLED, TAG_LABEL, type Template } from "./zns.ts"
 import { PROVIDERS, type AiConfig, type Provider } from "./ai.ts"
 import { KNOWLEDGE_EXT, type KnowledgeFile } from "./import.ts"
-import type { PriceService } from "./price.ts"
+import { pctText, type Fuel, type PriceService } from "./price.ts"
 import { BRANCHES, isBranch, isRegion, REGIONS } from "./region.ts"
 import { xlsx } from "./xlsx.ts"
 
@@ -86,6 +86,17 @@ border:1px solid var(--line);border-radius:8px;margin-bottom:32px}
 .inline{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .inline select{max-width:100%}
 .hint{margin:0;font-size:13px;color:var(--muted)}
+.acc-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
+.acc-list .panel{padding:12px 14px}
+.acc .acc-user{min-width:140px}
+.acc .pw{flex:1 1 220px}
+.pw{position:relative;display:flex}
+.pw input{flex:1;min-width:0;padding-right:44px!important}
+.eye{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:40px;height:40px;display:grid;place-items:center;background:none;border:0;border-radius:6px;color:var(--muted);cursor:pointer}
+.eye:hover{color:var(--ink)}
+.eye:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.whoami a{display:block;font-weight:400;font-size:12px;color:#A9B6C8;margin-top:4px}
+.whoami a:hover{color:#fff}
 .stack label.check{font-weight:400;display:flex;gap:8px;align-items:flex-start;margin-top:10px}
 .stack label.check input{margin-top:4px}
 code{background:var(--bot);padding:1px 5px;border-radius:4px;font-size:13px}
@@ -165,6 +176,9 @@ textarea:focus{border-color:var(--focus)}
 .card .row-actions{display:flex;gap:8px;justify-content:space-between;align-items:center}
 .btn.danger{background:var(--surface);color:var(--signal);border-color:var(--line)}
 .tag-new{display:inline-block;padding:0 6px;border-radius:8px;font-size:12px;font-weight:600;background:var(--tape-soft);margin-left:6px}
+.whoami{margin:auto 0 0;padding:9px 13px 0;font-size:14px;font-weight:600;color:#fff}
+.whoami span{display:block;font-weight:400;font-size:12px;color:#A9B6C8}
+.whoami+.logout{margin:0}
 .logout{margin:auto 0 0}
 .logout button{font:inherit;font-size:14px;background:none;border:0;color:#A9B6C8;padding:9px 13px;cursor:pointer;border-radius:6px}
 .logout button:hover{color:#fff;background:var(--ink-2)}
@@ -206,6 +220,35 @@ textarea:focus{border-color:var(--focus)}
 .search:focus-within{border-color:var(--focus);box-shadow:0 0 0 3px rgba(43,108,223,.15)}
 .search input{flex:1;border:0;outline:0;background:transparent;font:inherit;font-size:16px;padding:11px 0;color:var(--ink);min-width:0}
 .filters{display:flex;flex-wrap:wrap;gap:8px}
+.pager{justify-content:center;margin-top:16px}
+.ai-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-bottom:32px}
+.ai-grid h2{margin-top:0}
+.ai-now{margin:0 0 12px;padding:8px 12px;border-radius:8px;background:var(--paper);font-size:14px}
+.model-pick{display:flex;flex-direction:column;gap:6px}
+.model-pick[hidden]{display:none}
+@media (max-width:420px){.ai-grid{grid-template-columns:1fr}}
+.fuel-status{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;padding:12px 16px;margin:0 0 16px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:15px}
+.fuel-status .dot{margin-right:0}
+.fuel-status.warn{background:#FDF5F4;border-color:#F1C9C4}
+.fuel-status.warn b{color:var(--signal)}
+.fuel-updated{margin-left:auto;font-size:13px;color:var(--muted)}
+.fuel-form{display:flex;flex-direction:column;gap:18px}
+.fuel-top{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px}
+.fuel-top label{display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:600;flex:0 1 220px}
+.fuel-top .btn{margin-left:auto}
+.fuel-top input,.pct input{font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);min-width:0}
+.fuel-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.fuel-card{border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;background:var(--paper)}
+.fuel-card label{font-weight:600;font-size:15px}
+.fuel-card-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.fuel-card .ex{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.fuel-card .ex b{color:var(--ink);font-size:15px}
+.pct{position:relative;display:inline-flex;align-items:center}
+.pct input{width:110px;padding-right:30px;text-align:right;font-variant-numeric:tabular-nums;-moz-appearance:textfield}
+.pct input::-webkit-inner-spin-button,.pct input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.pct span{position:absolute;right:12px;color:var(--muted);pointer-events:none}
+@media (max-width:520px){.fuel-top label{flex:1 1 100%}.fuel-top .btn{width:100%;margin:0}.fuel-updated{margin-left:0;flex-basis:100%}.fuel-grid{grid-template-columns:1fr}}
+.pager .fchip:disabled{opacity:.4;cursor:default}
 .fchip{font:inherit;font-size:14px;font-weight:600;padding:7px 12px;min-height:38px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;transition:background .15s,border-color .15s,color .15s}
 .fchip b{font-weight:700;color:var(--muted);margin-left:2px;font-variant-numeric:tabular-nums}
 .fchip:hover{border-color:var(--muted)}
@@ -257,7 +300,7 @@ textarea:focus{border-color:var(--focus)}
 .editor textarea{min-height:40vh}
 }`
 
-type Page = "chats" | "stats" | "test" | "settings" | "images" | "zns" | "ai"
+type Page = "chats" | "stats" | "test" | "settings" | "images" | "zns" | "ai" | "fuel" | "accounts"
 const NAV: [Page, string, string][] = [
   ["chats", "/admin", "Hội thoại"],
   ["stats", "/admin/stats", "Thống kê"],
@@ -266,15 +309,37 @@ const NAV: [Page, string, string][] = [
   ["settings", "/admin/settings", "Kiến thức & giọng văn"],
   ["images", "/admin/images", "Ảnh gửi khách"],
   ["ai", "/admin/ai", "Model AI"],
+  ["fuel", "/admin/price", "Phụ phí xăng dầu"],
+  ["accounts", "/admin/accounts", "Tài khoản"],
 ]
 
-const MANAGER_PAGES: Page[] = ["settings", "images", "ai"]
+const MANAGER_PAGES: Page[] = ["settings", "images", "ai", "fuel", "accounts"]
 
 const head = (title: string) => `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} – Newpost CSKH</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700&display=swap" rel="stylesheet">
 <style>${CSS}</style></head>`
+
+/** Nút con mắt cạnh mọi ô mật khẩu: bấm để hiện/ẩn mật khẩu đang gõ. */
+const PASSWORD_EYE = `<script>(() => {
+  const eye = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>'
+  const off = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A9.8 9.8 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7c1.8 0 3.4-.5 4.7-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
+  for (const input of document.querySelectorAll("input[type=password]")) {
+    const wrap = document.createElement("span"), btn = document.createElement("button")
+    wrap.className = "pw"
+    btn.type = "button"; btn.className = "eye"; btn.innerHTML = eye
+    btn.setAttribute("aria-label", "Hiện mật khẩu"); btn.setAttribute("aria-pressed", "false")
+    btn.onclick = () => {
+      const show = input.type === "password"
+      input.type = show ? "text" : "password"
+      btn.innerHTML = show ? off : eye
+      btn.setAttribute("aria-label", show ? "Ẩn mật khẩu" : "Hiện mật khẩu"); btn.setAttribute("aria-pressed", String(show))
+    }
+    input.replaceWith(wrap)
+    wrap.append(input, btn)
+  }
+})()</script>`
 
 /** Form có data-live: gửi ngầm rồi thay phần trang (mặc định cả main, hoặc vùng ghi trong data-live) bằng bản mới,
  *  giữ vị trí cuộn và khung đang mở – không tải lại trang, không nhảy lên đầu. Lỗi thì gửi form kiểu thường. */
@@ -307,7 +372,7 @@ function layout(title: string, active: Page | null, body: string) {
   return `${head(title)}<body><div class="shell">
 <aside class="side"><div class="brand">Newpost Global<span>Chăm sóc khách hàng Zalo</span></div><nav class="nav">${nav}</nav>
 <form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></aside>
-<main class="main">${body}<span id="latest"></span></main></div>${LIVE_FORMS}</body></html>`
+<main class="main">${body}<span id="latest"></span></main></div>${LIVE_FORMS}${PASSWORD_EYE}</body></html>`
 }
 
 const ROLE_LABEL = { user: "Khách", bot: "Bot", staff: "Nhân viên" }
@@ -429,25 +494,43 @@ function userRow(u: UserRow) {
 }
 
 /** Nút lọc + ô tìm kiếm cho danh sách có data-state / data-branch / data-search. */
+/** Lọc, tìm và chia trang danh sách hội thoại (10 khách mỗi trang), không tải lại trang. */
 const LIST_FILTER = `<script>(() => {
-  const box = document.getElementById("q"), list = document.getElementById("inbox"), empty = document.getElementById("no-match")
-  let filter = "all"
-  const apply = () => {
-    const q = box.value.trim().toLowerCase()
-    let shown = 0
-    for (const li of list.children) {
-      const ok = (filter === "all" || li.dataset.state === filter || li.dataset.branch === filter) && (!q || li.dataset.search.includes(q))
-      li.hidden = !ok
-      if (ok) shown++
-    }
-    empty.hidden = shown > 0
+  const PER = 10
+  const box = document.getElementById("q"), list = document.getElementById("inbox"), empty = document.getElementById("no-match"), pager = document.getElementById("pager")
+  let filter = "all", page = 1
+  const btn = (label, to, opts = {}) => {
+    const b = document.createElement("button")
+    b.type = "button"; b.className = "fchip"; b.textContent = label
+    if (opts.aria) b.setAttribute("aria-label", opts.aria)
+    if (opts.current) b.setAttribute("aria-current", "page"), b.setAttribute("aria-pressed", "true")
+    b.disabled = !!opts.disabled
+    b.onclick = () => { page = to; apply(false); list.scrollIntoView({ block: "start" }) }
+    return b
   }
-  box.addEventListener("input", apply)
+  const apply = (reset = true) => {
+    if (reset) page = 1
+    const q = box.value.trim().toLowerCase()
+    const matches = [...list.children].filter((li) => (filter === "all" || li.dataset.state === filter || li.dataset.branch === filter) && (!q || li.dataset.search.includes(q)))
+    const pages = Math.max(1, Math.ceil(matches.length / PER))
+    page = Math.min(page, pages)
+    for (const li of list.children) li.hidden = true
+    for (const li of matches.slice((page - 1) * PER, page * PER)) li.hidden = false
+    empty.hidden = matches.length > 0
+    pager.hidden = pages < 2
+    pager.replaceChildren(
+      btn("‹ Trước", page - 1, { disabled: page === 1, aria: "Trang trước" }),
+      ...Array.from({ length: pages }, (_, i) => btn(String(i + 1), i + 1, { current: i + 1 === page, aria: "Trang " + (i + 1) })),
+      btn("Sau ›", page + 1, { disabled: page === pages, aria: "Trang sau" }),
+    )
+  }
+  box.addEventListener("input", () => apply())
   for (const b of document.querySelectorAll("[data-filter]")) b.addEventListener("click", () => {
     filter = b.dataset.filter
     for (const x of document.querySelectorAll("[data-filter]")) x.setAttribute("aria-pressed", String(x === b))
     apply()
   })
+  apply()
 })()</script>`
 
 export function dashboard(p: {
@@ -531,7 +614,8 @@ ${[["all", "Cả hai chi nhánh"], ["bac", "Chi nhánh miền Bắc"], ["nam", "
 </div>
 ${customers.length
   ? `<ul class="list" id="inbox">${sorted.map(userRow).join("")}</ul>
-<p class="empty" id="no-match" hidden>Không có hội thoại nào khớp. Thử bỏ bớt chữ tìm kiếm hoặc chọn "Tất cả".</p>${LIST_FILTER}`
+<p class="empty" id="no-match" hidden>Không có hội thoại nào khớp. Thử bỏ bớt chữ tìm kiếm hoặc chọn "Tất cả".</p>
+<nav class="filters pager" id="pager" aria-label="Chuyển trang" hidden></nav>${LIST_FILTER}`
   : '<ul class="list"><li class="empty">Chưa có khách nào nhắn vào OA. Thử bot ở mục Chat thử trong lúc chờ.</li></ul>'}
 </section>
 ${staffRows.length
@@ -675,32 +759,87 @@ ${saved ? '<span class="saved" role="status">Đã lưu. Bot dùng nội dung m�
   )
 }
 
-export function aiPage(p: { cfg: AiConfig; keys: Record<Provider, string>; flash: string; error: string }) {
-  const ids = Object.keys(PROVIDERS) as Provider[]
-  const options = ids.map((id) => `<option value="${id}"${id === p.cfg.provider ? " selected" : ""}>${esc(PROVIDERS[id].label)}</option>`).join("")
-  const models = ids.flatMap((id) => PROVIDERS[id].models).map((m) => `<option value="${esc(m)}">`).join("")
+/** Mô tả ngắn từng model gợi ý, hiện ngay trong danh sách chọn. */
+const MODEL_NOTES: Record<string, string> = {
+  "gemini-flash-lite-latest": "nhanh nhất, miễn phí – đang khuyên dùng",
+  "gemini-flash-latest": "thông minh hơn, chậm hơn một chút",
+  "gemini-pro-latest": "thông minh nhất, chậm, gói miễn phí giới hạn lượt",
+  "gpt-4.1-mini": "nhanh, rẻ, tiếng Việt tốt – khuyên dùng làm dự phòng",
+  "gpt-4.1": "thông minh hơn, đắt hơn khoảng 5 lần",
+  "gpt-4o-mini": "rẻ, nhanh, kém chính xác hơn 4.1-mini",
+  "gpt-4.1-nano": "rẻ nhất, dễ trả lời sai",
+  "gpt-5-mini": "thông minh, nhưng suy nghĩ lâu nên khách chờ lâu",
+  "gpt-5": "mạnh nhất, chậm và đắt",
+  "claude-haiku-5-5": "nhanh, rẻ",
+  "claude-sonnet-5-5": "cân bằng",
+  "claude-opus-5-5": "mạnh nhất, đắt",
+}
+
+/** Chọn hãng + model: danh sách model đổi theo hãng, có lựa chọn "Nhập tên khác" cho model chưa có trong gợi ý. */
+function modelPicker(prefix: string, providers: Provider[], provider: Provider | "none", model: string, allowNone = false) {
+  const list = (id: Provider, current: string) => {
+    const models = PROVIDERS[id].models.includes(current) || !current ? PROVIDERS[id].models : [current, ...PROVIDERS[id].models]
+    return models.map((m) => `<option value="${esc(m)}"${m === current ? " selected" : ""}>${esc(m)}${MODEL_NOTES[m] ? ` – ${esc(MODEL_NOTES[m])}` : ""}</option>`).join("")
+  }
+  const groups = providers
+    .map((id) => `<template data-models="${id}">${list(id, id === provider ? model : "")}<option value="">Nhập tên model khác…</option></template>`)
+    .join("")
+  return `<label for="${prefix}-provider">Hãng AI</label>
+<select id="${prefix}-provider" name="provider" data-picker="${prefix}">
+${allowNone ? `<option value="none"${provider === "none" ? " selected" : ""}>Không dùng dự phòng</option>` : ""}
+${providers.map((id) => `<option value="${id}"${id === provider ? " selected" : ""}>${esc(PROVIDERS[id].label)}</option>`).join("")}</select>
+<div class="model-pick" id="${prefix}-pick"${provider === "none" ? " hidden" : ""}>
+<label for="${prefix}-model">Model</label><select id="${prefix}-model" name="model"></select>
+<input id="${prefix}-custom" name="model_custom" placeholder="Gõ đúng tên model của hãng, ví dụ gemini-flash-latest" autocomplete="off" data-lpignore="true" hidden disabled>
+<label for="${prefix}-key">API key</label><input id="${prefix}-key" name="key" type="password" autocomplete="new-password" data-lpignore="true" placeholder="Để trống nếu hãng này đã có key">
+</div>${groups}`
+}
+
+const MODEL_PICKER = `<script>(() => {
+  for (const sel of document.querySelectorAll("[data-picker]")) {
+    const p = sel.dataset.picker, pick = document.getElementById(p + "-pick"), model = document.getElementById(p + "-model"), custom = document.getElementById(p + "-custom")
+    const fill = () => {
+      const t = document.querySelector('template[data-models="' + sel.value + '"]')
+      pick.hidden = !t
+      if (t) model.replaceChildren(t.content.cloneNode(true))
+      sync()
+    }
+    // Ô ẩn thì tắt hẳn (không gửi lên): trình duyệt hay tự điền tên đăng nhập vào ô chữ này.
+    const sync = () => { custom.hidden = custom.disabled = model.value !== ""; custom.required = !custom.hidden }
+    sel.addEventListener("change", fill)
+    model.addEventListener("change", sync)
+    fill()
+  }
+})()</script>`
+
+export function aiPage(p: { cfg: AiConfig; backup: AiConfig | null; keys: Record<Provider, string>; flash: string; error: string }) {
+  // Công ty không dùng ChatGPT (2026-11-03): ẩn OpenAI khỏi trang, mã gọi OpenAI vẫn giữ nếu sau này cần.
+  const ids = (Object.keys(PROVIDERS) as Provider[]).filter((id) => id !== "openai")
   const keys = ids
     .map((id) => `<li>${esc(PROVIDERS[id].label)}: ${p.keys[id] ? `đã có key <code>${esc(p.keys[id])}</code>` : "chưa có key"}
  · <a href="${PROVIDERS[id].keyUrl}" target="_blank" rel="noopener">Lấy API key</a></li>`)
     .join("")
+  const now = (c: AiConfig | null) => (c ? `<b>${esc(PROVIDERS[c.provider].label)}</b> · <code>${esc(c.model)}</code>` : "<b>Chưa bật</b>")
   return layout(
     "Model AI",
     "ai",
     `<h1>Model AI</h1>
-<p class="muted">Chọn hãng AI và model bot dùng để trả lời khách. Đang dùng: <b>${esc(PROVIDERS[p.cfg.provider].label)}</b>, model <code>${esc(p.cfg.model)}</code>.</p>
 ${p.flash ? `<p class="banner" role="status">${esc(p.flash)}</p>` : ""}
-${p.error ? `<p class="banner error" role="alert">Chưa đổi model: ${esc(p.error)}</p>` : ""}
-<section class="group panel"><form class="stack" method="post" action="/admin/ai" onsubmit="this.querySelector('button').disabled=true">
-<label for="provider">Hãng AI</label><select id="provider" name="provider">${options}</select>
-<label for="model">Model</label><input id="model" name="model" list="models" required value="${esc(p.cfg.model)}" autocomplete="off">
-<datalist id="models">${models}</datalist>
-<p class="hint">Gõ tên model hoặc chọn gợi ý. Tên model phải đúng với hãng đã chọn.</p>
-<label for="key">API key</label><input id="key" name="key" type="password" autocomplete="off" placeholder="Để trống nếu hãng này đã có key">
-<p class="hint">Key chỉ lưu trên máy chủ, không hiện lại trên trang. Mỗi hãng giữ key riêng.</p>
+${p.error ? `<p class="banner error" role="alert">Chưa lưu: ${esc(p.error)}</p>` : ""}
+<div class="ai-grid">
+<section class="panel"><h2>AI chính</h2><p class="ai-now">Đang dùng: ${now(p.cfg)}</p>
+<form class="stack" method="post" action="/admin/ai" onsubmit="this.querySelector('button').disabled=true">
+${modelPicker("main", ids, p.cfg.provider, p.cfg.model)}
 <div><button class="btn">Kiểm tra và dùng model này</button></div>
-<p class="hint">Hệ thống gửi thử một câu chào tới model. Chỉ khi model trả lời được mới đổi, nên bot không bị gián đoạn nếu key sai.</p>
-</form></section>
-<section class="group"><h2>API key đã lưu</h2><ul class="hint">${keys}</ul></section>`,
+<p class="hint">Hệ thống gửi thử một câu chào. Chỉ khi model trả lời được mới đổi, nên bot không bị gián đoạn nếu key sai.</p></form></section>
+<section class="panel"><h2>AI dự phòng</h2><p class="ai-now">Đang dùng: ${now(p.backup)}</p>
+<form class="stack" method="post" action="/admin/ai/backup" onsubmit="this.querySelector('button').disabled=true">
+${modelPicker("backup", ids, p.backup?.provider ?? "none", p.backup?.model ?? "", true)}
+<div><button class="btn">Kiểm tra và lưu dự phòng</button></div>
+<p class="hint">AI chính quá tải hoặc lỗi thì bot tự chuyển sang AI dự phòng, khách không phải chờ. Chọn Google Gemini và dán key thứ 2
+(tạo ở tài khoản Google khác) để có thêm lượt miễn phí; key này lưu riêng, không thay key của AI chính.</p></form></section>
+</div>
+<section class="group"><h2>API key đã lưu</h2><p class="hint">Key chỉ lưu trên máy chủ, không hiện lại. Mỗi hãng giữ key riêng.</p><ul class="hint">${keys}</ul></section>${MODEL_PICKER}`,
   )
 }
 
@@ -989,7 +1128,7 @@ export function statsXlsx(s: Stats, publicUrl = "") {
   ])
 }
 
-export function loginPage(next: string, error = "") {
+export function loginPage(next: string, error = "", username = "") {
   return `${head("Đăng nhập")}<body><div class="login">
 <section class="login-brand"><div class="brand">Newpost Global<span>Chăm sóc khách hàng Zalo</span></div>
 <div class="tape-band" aria-hidden="true"></div></section>
@@ -997,10 +1136,113 @@ export function loginPage(next: string, error = "") {
 <h1>Đăng nhập</h1><p class="muted">Dành cho nhân viên chăm sóc khách hàng.</p>
 ${error ? `<p class="banner error" role="alert">${esc(error)}</p>` : ""}
 <input type="hidden" name="next" value="${esc(next)}">
+<label for="username">Tên đăng nhập</label>
+<input id="username" name="username" required value="${esc(username)}"${username ? "" : " autofocus"} autocomplete="username" autocapitalize="none" spellcheck="false">
 <label for="password">Mật khẩu</label>
-<input id="password" name="password" type="password" required autofocus autocomplete="current-password">
-<button class="btn">Đăng nhập</button></form></main></div></body></html>`
+<input id="password" name="password" type="password" required${username ? " autofocus" : ""} autocomplete="current-password">
+<button class="btn">Đăng nhập</button></form></main></div>${PASSWORD_EYE}</body></html>`
 }
 
 export const errorPage = (msg: string) =>
   layout("Có lỗi", null, `<h1>Có lỗi</h1><p class="banner">${esc(msg)}</p><a class="btn ghost" href="/admin">Về trang hội thoại</a>`)
+
+const ROLE_OPTIONS = (role: string) =>
+  `<option value="staff"${role === "staff" ? " selected" : ""}>Nhân viên</option><option value="admin"${role === "admin" ? " selected" : ""}>Admin</option>`
+
+export function accountsPage(accounts: Account[], me: string, flash: string) {
+  const rows = accounts
+    .map((a) => `<li class="panel"><form class="inline acc" method="post" action="/admin/accounts/edit">
+<input type="hidden" name="username" value="${esc(a.username)}">
+<strong class="acc-user">${esc(a.username)}${a.username === me ? ' <span class="muted">(bạn)</span>' : ""}</strong>
+<input name="name" value="${esc(a.name)}" maxlength="60" placeholder="Họ tên" aria-label="Họ tên của ${esc(a.username)}">
+<select name="role" aria-label="Vai trò của ${esc(a.username)}">${ROLE_OPTIONS(a.role)}</select>
+<input name="password" type="password" minlength="6" autocomplete="new-password" placeholder="Mật khẩu mới (để trống nếu không đổi)" aria-label="Mật khẩu mới của ${esc(a.username)}">
+<button class="btn ghost sm">Lưu</button>
+${a.username === me ? "" : `<button class="btn danger sm" formaction="/admin/accounts/delete" onclick="return confirm('Xóa tài khoản ${esc(a.username)}? Người này sẽ không đăng nhập được nữa.')">Xóa</button>`}
+</form></li>`)
+    .join("")
+  return layout(
+    "Tài khoản",
+    "accounts",
+    `<h1>Tài khoản</h1>
+<p class="muted"><strong>Admin</strong> vào được mọi trang và quản lý tài khoản. <strong>Nhân viên</strong> chỉ xem hội thoại, chat với khách, thống kê, chat thử.</p>
+${flash ? `<p class="banner" role="status">${esc(flash)}</p>` : ""}
+<section class="group panel"><h2>Thêm tài khoản</h2>
+<form class="stack" method="post" action="/admin/accounts/add">
+<label for="username">Tên đăng nhập</label>
+<input id="username" name="username" required pattern="[a-z0-9_\-]{3,30}" maxlength="30" autocapitalize="none" spellcheck="false" placeholder="Ví dụ: lan-nguyen">
+<p class="hint">3–30 ký tự: chữ thường không dấu, số, dấu - hoặc _.</p>
+<label for="name">Họ tên</label><input id="name" name="name" maxlength="60" placeholder="Ví dụ: Nguyễn Thị Lan">
+<label for="password">Mật khẩu</label><input id="password" name="password" type="password" required minlength="6" autocomplete="new-password">
+<label for="role">Vai trò</label><select id="role" name="role">${ROLE_OPTIONS("staff")}</select>
+<div><button class="btn">Tạo tài khoản</button></div></form></section>
+<section class="group"><h2>Danh sách <span class="muted">(${accounts.length})</span></h2>
+<ul class="acc-list">${rows}</ul></section>`,
+  )
+}
+
+const vnDate = (day: string) => day.split("-").reverse().join("/")
+
+/** Ví dụ cước 1.000.000đ sau khi cộng phụ phí, cập nhật ngay khi gõ %. */
+const FUEL_EXAMPLE = `<script>(() => {
+  for (const input of document.querySelectorAll("[data-pct]")) {
+    const out = document.getElementById("ex-" + input.dataset.pct)
+    const show = () => {
+      const v = Number(input.value.replace(",", "."))
+      out.textContent = v > 0 ? Math.round(1e6 * (1 + v / 100)).toLocaleString("vi-VN") + "đ" : "Không cộng"
+    }
+    input.addEventListener("input", show)
+    show()
+  }
+})()</script>`
+
+export function fuelPage(fuel: Fuel | null, services: PriceService[], today: string, flash: string) {
+  const expired = !!fuel?.to && fuel.to < today
+  const range = fuel?.from || fuel?.to ? `${fuel.from ? vnDate(fuel.from) : "…"} – ${fuel.to ? vnDate(fuel.to) : "…"}` : ""
+  const status = !fuel
+    ? '<div class="fuel-status warn"><span class="dot off"></span>Chưa nhập phụ phí: bot báo giá theo bảng công bố, nói "chưa gồm phụ phí xăng dầu".</div>'
+    : `<div class="fuel-status${expired ? " warn" : ""}" role="${expired ? "alert" : "status"}"><span class="dot${expired ? " off" : ""}"></span>
+<b>${expired ? "Đã hết hạn" : "Đang áp dụng"}</b>${range ? ` <span>${range}</span>` : ""}
+<span class="fuel-updated">${expired ? "Bot vẫn dùng mức này tới khi bạn nhập mức mới" : `Cập nhật ${vnTime(fuel.updated)}`}</span></div>`
+  const cards = services
+    .map((s) => {
+      const id = esc(s.code)
+      const v = fuel?.pct[s.code]
+      return `<div class="fuel-card"><label for="pct-${id}">${esc(s.name)}</label>
+<div class="fuel-card-row"><span class="pct"><input id="pct-${id}" name="pct-${id}" data-pct="${id}" type="number" inputmode="decimal" min="0" max="200" step="0.01" value="${v ?? ""}" placeholder="0"><span aria-hidden="true">%</span></span>
+<span class="ex">1.000.000đ → <b id="ex-${id}">${v ? Math.round(1e6 * (1 + v / 100)).toLocaleString("vi-VN") + "đ" : "Không cộng"}</b></span></div></div>`
+    })
+    .join("")
+  return layout(
+    "Phụ phí xăng dầu",
+    "fuel",
+    `<h1>Phụ phí xăng dầu</h1>
+<p class="muted">Nhập % theo thông báo của Bộ phận Quốc tế. Khi báo giá, bot tự tính tổng = cước + phụ phí xăng dầu + phụ thu mặt hàng (chuyên tuyến) + VAT, ghi rõ từng khoản, và nhắc khách giá áp dụng đến ngày kết thúc.</p>
+${flash ? `<p class="banner" role="status">${esc(flash)}</p>` : ""}
+${status}
+${services.length ? `<form class="panel fuel-form" method="post" action="/admin/price/fuel">
+<div class="fuel-top"><label>Áp dụng từ ngày<input name="from" type="date" value="${esc(fuel?.from ?? "")}"></label>
+<label>Đến ngày<input name="to" type="date" value="${esc(fuel?.to ?? "")}"></label>
+<label>VAT<span class="pct"><input name="vat" type="number" inputmode="decimal" min="0" max="20" step="0.1" value="${fuel?.vat ?? 8}"><span aria-hidden="true">%</span></span></label>
+<button class="btn">Lưu và áp dụng</button></div>
+<div class="fuel-grid">${cards}</div>
+<p class="hint">Để trống hoặc 0 là không cộng. Quá ngày kết thúc bot vẫn dùng mức cũ, trang này báo đỏ để nhắc.</p></form>${FUEL_EXAMPLE}`
+  : '<p class="empty">Chưa nạp bảng giá nào. Nạp file Excel bảng giá ở trang Kiến thức & giọng văn trước.</p>'}`,
+  )
+}
+
+export function passwordPage(flash: string, error: string) {
+  return layout(
+    "Đổi mật khẩu",
+    null,
+    `<h1>Đổi mật khẩu</h1>
+${flash ? `<p class="banner" role="status">${esc(flash)}</p>` : ""}
+${error ? `<p class="banner error" role="alert">${esc(error)}</p>` : ""}
+<section class="group panel"><form class="stack" method="post" action="/admin/password">
+<label for="current">Mật khẩu hiện tại</label><input id="current" name="current" type="password" required autocomplete="current-password">
+<label for="password">Mật khẩu mới</label><input id="password" name="password" type="password" required minlength="6" autocomplete="new-password">
+<p class="hint">Tối thiểu 6 ký tự.</p>
+<label for="confirm">Nhập lại mật khẩu mới</label><input id="confirm" name="confirm" type="password" required minlength="6" autocomplete="new-password">
+<div><button class="btn">Đổi mật khẩu</button></div></form></section>`,
+  )
+}

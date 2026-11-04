@@ -24,7 +24,12 @@ Máy đã cài sẵn (laptop đang dùng): chỉ cần 4 bước, khoảng 3 ph�
 ## 2. Trang quản trị
 
 - Địa chỉ: link **Trang quản trị** trong cửa sổ đen (dạng `https://....trycloudflare.com/admin`). Trên chính máy chạy có thể dùng http://localhost:3000/admin.
-- Mật khẩu nhân viên: giá trị `ADMIN_PASSWORD` trong file `.env`. Mật khẩu quản lý: `MANAGER_PASSWORD` – chỉ đăng nhập bằng mật khẩu này mới thấy và vào được *Kiến thức & giọng văn*, *Ảnh gửi khách*, *Model AI*.
+- Đăng nhập bằng **tên đăng nhập + mật khẩu** riêng của từng người. Có 2 vai trò: **Admin** vào mọi trang (thêm *Kiến thức & giọng văn*, *Ảnh gửi khách*, *Model AI*, *Tài khoản*); **Nhân viên** chỉ xem hội thoại, chat với khách, thống kê, chat thử.
+- Admin tạo / sửa / đổi mật khẩu / xóa tài khoản ở trang *Tài khoản*. Đổi mật khẩu hoặc xóa tài khoản thì người đó bị đăng xuất ngay. Luôn phải còn ít nhất 1 admin.
+- Lần chạy đầu tiên hệ thống tự tạo 2 tài khoản từ file `.env`: `admin` (mật khẩu `MANAGER_PASSWORD`) và `nhanvien` (mật khẩu `ADMIN_PASSWORD`). Nên tạo tài khoản riêng cho từng người rồi xóa tài khoản `nhanvien` dùng chung.
+- Ai cũng tự đổi được mật khẩu của mình: bấm *Đổi mật khẩu* dưới tên ở thanh bên trái. Ô mật khẩu có nút con mắt để xem lại chữ đã gõ.
+
+**Phụ phí xăng dầu (admin):** mỗi khi Bộ phận Quốc tế gửi thông báo mức mới, vào trang *Phụ phí xăng dầu*, nhập % của từng dịch vụ, khoảng ngày áp dụng và VAT (mặc định 8%), bấm *Lưu*. Khi báo giá, bot báo **giá tổng** = cước + phụ phí xăng dầu + phụ thu hải quan theo mặt hàng (chỉ chuyên tuyến CTQ/CTU, ví dụ mỹ phẩm, đồ có pin) + VAT, ghi rõ từng khoản, và nhắc khách giá chỉ áp dụng đến ngày kết thúc (phụ phí đổi theo tuần, khách hỏi vì sao giá khác tuần trước thì bot giải thích). Hệ thống tự nhận mặt hàng từ tin khách (điện thoại, laptop… tính là hàng có pin; hàng có pin không báo UPS và DHL qua Singapore). Quá ngày kết thúc mà chưa nhập mức mới thì bot vẫn dùng mức cũ và trang báo đỏ để nhắc.
 
 **Vùng và chi nhánh:** khi khách có nhu cầu gửi hàng mà chưa biết khách ở đâu, bot gửi tin có nút để khách chọn vùng (Bắc / Trung / Nam; các tỉnh miền Tây tính vào miền Nam), rồi chọn bưu cục gửi hàng (miền Bắc – Hà Nội hoặc miền Nam – TP.HCM). Khách nói tỉnh/thành mình ở (ví dụ "mình ở Nghệ An") thì hệ thống tự ghi vùng, không hỏi lại. Nhân viên sửa tay được ở đầu trang hội thoại. Trang *Thống kê* chia theo bưu cục khách chọn (chi nhánh miền Bắc, miền Nam, khách chưa chọn); nút *Tải Excel* ra file .xlsx 4 trang tính: Tổng quan, Khách hàng (đầy đủ thông tin, khách hỏi gì, trả lời cuối, link hội thoại), Đơn đã chốt (tách cột nước đến, hàng, cân nặng, giá…), Tin nhắn trong ngày.
 
@@ -51,9 +56,9 @@ Ngoài giờ bot im; tới giờ mở bot trả lời các tin khách nhắn tro
 - Nhóm Telegram: tạo bot bằng @BotFather, thêm bot vào nhóm, nhắn 1 tin trong nhóm, dán token → *Lưu và gửi thử*.
 - Zalo cá nhân: nhân viên quan tâm OA và nhắn OA 1 tin → mở hội thoại của nhân viên → *Nhận thông báo*. Zalo chỉ cho OA nhắn trong 48 giờ kể từ tin cuối của nhân viên, nên nhân viên nhắn OA ít nhất 2 ngày 1 lần.
 
-**Tra và theo dõi vận đơn:** khách hỏi mã vận đơn thì bot tự tra trên trang tra cứu NewPost và báo hành trình hiện tại. Đơn chưa giao xong thì bot báo khách "em sẽ tự nhắn khi giao thành công" và cứ 30 phút tra lại (24/24); thấy *Đã giao thành công* là nhắn khách 1 tin rồi thôi theo dõi. Theo dõi tối đa 30 ngày; Zalo chỉ cho OA nhắn trong 48 giờ sau tin cuối của khách, quá hạn thì bot chờ khách nhắn lại mới báo được.
+**Tra và theo dõi vận đơn:** khách hỏi mã vận đơn thì bot tự tra trên trang tra cứu NewPost và báo hành trình hiện tại. Đơn chưa giao xong thì bot báo khách "em sẽ tự nhắn khi giao thành công" và cứ 30 phút tra lại (24/24); hành trình có mốc mới (ví dụ từ kho Hồ Chí Minh sang Singapore) thì nhắn khách cập nhật để khách yên tâm, không cần hỏi lại; thấy *Đã giao thành công* là nhắn khách 1 tin rồi thôi theo dõi. Theo dõi tối đa 30 ngày; Zalo chỉ cho OA nhắn trong 48 giờ sau tin cuối của khách, quá hạn thì bot chờ khách nhắn lại mới báo được.
 
-Khi cần số điện thoại (chốt đơn, hẹn gọi lại), bot gửi kèm nút **Chia sẻ số điện thoại**: khách bấm là số tự lưu vào hệ thống, không phải gõ. Zalo không cho lấy số điện thoại nếu khách chưa đồng ý chia sẻ.
+Khi cần số điện thoại (chốt đơn, hẹn gọi lại), bot gửi thẻ **Chốt cước đơn hàng** (banner NewPost) có nút gửi số: khách bấm là số tự lưu vào hệ thống, không phải gõ. Gọi là "chốt cước" thay vì "chia sẻ số" để khách không e ngại. Zalo không cho lấy số điện thoại nếu khách chưa đồng ý chia sẻ.
 
 ## 3. Cài trên máy mới (chỉ làm một lần)
 

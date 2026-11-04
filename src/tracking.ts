@@ -54,6 +54,20 @@ export async function track(code: string): Promise<Tracking | null> {
 /** Mốc mới nhất là "Đã giao thành công" (Delivered): đơn đã xong, thôi theo dõi. */
 export const isDelivered = (t: Tracking) => /giao thành công/i.test(t.events[0]?.title ?? "") || /^delivered\b/i.test(t.events[0]?.desc ?? "")
 
+/** Mốc hành trình mới nhất (giờ + nội dung): đổi là hàng đã đi tiếp, bot báo khách. */
+export const eventKey = (t: Tracking) => (t.events[0] ? `${t.events[0].time}|${t.events[0].title}|${t.events[0].place}` : "")
+
+const step = (t: Tracking) => {
+  const e = t.events[0]
+  return `${e.title}${e.place ? ` tại ${e.place}` : ""}${e.time ? ` (lúc ${e.time})` : ""}`
+}
+
+/** Tin bot tự gửi khi hành trình vận đơn đang theo dõi có mốc mới (nhiều mã gộp 1 tin). */
+export const progressText = (ts: Tracking[]) =>
+  ts.length === 1
+    ? `Dạ em cập nhật hành trình vận đơn ${ts[0].code}: ${step(ts[0])}. Em tiếp tục theo dõi và sẽ báo anh/chị khi đơn giao thành công ạ.`
+    : `Dạ em cập nhật hành trình các vận đơn của anh/chị:\n${ts.map((t) => `- ${t.code}: ${step(t)}`).join("\n")}\nEm tiếp tục theo dõi và sẽ báo anh/chị khi đơn giao thành công ạ.`
+
 /** Câu báo khách mã đang theo dõi (thêm vào câu trả lời khi đơn chưa giao xong). */
 export const WATCH_NOTE = "Em đã ghi nhận theo dõi vận đơn này, khi đơn giao thành công em sẽ tự nhắn báo anh/chị ngay ạ."
 
@@ -95,7 +109,7 @@ export async function trackResult(reply: string, lookup = track) {
     "# KẾT QUẢ TRA VẬN ĐƠN (từ hệ thống tra cứu NewPost, mốc mới nhất trước)",
   ]
   const customer: string[] = []
-  const status: { code: string; done: boolean }[] = []
+  const status: { code: string; done: boolean; last: string }[] = []
   for (const code of codes) {
     let t: Tracking | null
     try {
@@ -113,7 +127,7 @@ export async function trackResult(reply: string, lookup = track) {
     }
     const [last, ...prev] = t.events
     const done = isDelivered(t)
-    status.push({ code, done })
+    status.push({ code, done, last: eventKey(t) })
     ai.push(`Mã ${code}${t.info.length ? ` (${t.info.join("; ")})` : ""}: ${done ? "ĐÃ GIAO THÀNH CÔNG (đơn hoàn thành)" : "CHƯA GIAO XONG – hệ thống đã tự theo dõi mã này"}`,
       `- MỚI NHẤT: ${event(last)}`, ...prev.slice(0, 4).map((e) => `- Trước đó: ${event(e)}`))
     customer.push(`Dạ mã vận đơn ${code}: ${last.title}${last.place ? ` tại ${last.place}` : ""} (cập nhật ${last.time})${last.desc ? `. ${last.desc}` : ""}.${done ? "" : ` ${WATCH_NOTE}`}`)

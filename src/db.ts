@@ -1,3 +1,4 @@
+import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto"
 import { mkdirSync } from "node:fs"
 import { DatabaseSync } from "node:sqlite"
 
@@ -59,10 +60,13 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS messages_time ON messages (created_at);
   -- Vận đơn khách đã hỏi mà chưa giao xong: bot tự tra lại định kỳ, giao thành công thì báo khách.
   CREATE TABLE IF NOT EXISTS watches (code TEXT NOT NULL, user_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (code, user_id));
+  -- Tài khoản đăng nhập trang quản trị. pass: "salt:hash" scrypt, không lưu mật khẩu gốc.
+  CREATE TABLE IF NOT EXISTS accounts (username TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', pass TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('admin', 'staff')), created_at INTEGER NOT NULL);
 `)
 // Cột thêm sau khi đã có dữ liệu: DB cũ chưa có thì thêm vào.
 // region: vùng khách ở (bac/trung/nam); branch: bưu cục khách chọn gửi hàng (bac/nam) – thống kê chia theo chi nhánh.
-for (const col of ["users phone TEXT", "users followed_up_at INTEGER NOT NULL DEFAULT 0", "images usage TEXT NOT NULL DEFAULT ''", "users region TEXT", "users branch TEXT", "orders updated_at INTEGER"]) {
+for (const col of ["users phone TEXT", "users followed_up_at INTEGER NOT NULL DEFAULT 0", "images usage TEXT NOT NULL DEFAULT ''", "users region TEXT", "users branch TEXT", "orders updated_at INTEGER", "watches last_event TEXT"]) {
   const [table, ...def] = col.split(" ")
   try {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${def.join(" ")}`)
@@ -197,8 +201,14 @@ export function deleteImage(id: number) {
 }
 
 // --- Theo dõi vận đơn ---
-export function watchCode(userId: string, code: string) {
+/** lastEvent: mốc hành trình mới nhất khách đã được báo (để bot báo lại khi hành trình đổi). */
+export function watchCode(userId: string, code: string, lastEvent?: string) {
   db.prepare("INSERT OR IGNORE INTO watches (code, user_id, created_at) VALUES (?, ?, ?)").run(code, userId, Date.now())
+  if (lastEvent) setWatchEvent(userId, code, lastEvent)
+}
+
+export function setWatchEvent(userId: string, code: string, lastEvent: string) {
+  db.prepare("UPDATE watches SET last_event = ? WHERE code = ? AND user_id = ?").run(lastEvent, code, userId)
 }
 
 export function unwatchCode(userId: string, code: string) {
@@ -206,10 +216,11 @@ export function unwatchCode(userId: string, code: string) {
 }
 
 /** Vận đơn đang theo dõi, kèm lúc khách nhắn gần nhất (Zalo chỉ cho OA nhắn trong 48 giờ sau đó). */
-export function watches(): { code: string; user_id: string; created_at: number; last_user_at: number }[] {
-  return db.prepare(`SELECT w.code, w.user_id, w.created_at,
+export type Watch = { code: string; user_id: string; created_at: number; last_user_at: number; last_event: string | null }
+export function watches(): Watch[] {
+  return db.prepare(`SELECT w.code, w.user_id, w.created_at, w.last_event,
       COALESCE((SELECT MAX(created_at) FROM messages m WHERE m.user_id = w.user_id AND m.role = 'user'), 0) AS last_user_at
-    FROM watches w`).all() as { code: string; user_id: string; created_at: number; last_user_at: number }[]
+    FROM watches w`).all() as Watch[]
 }
 
 // --- Đơn chốt & thống kê ---
@@ -358,3 +369,35 @@ export function isOptedOut(phone: string): boolean {
 export function listOptOut(): string[] {
   return (db.prepare("SELECT phone FROM zns_optout ORDER BY created_at DESC").all() as { phone: string }[]).map((r) => r.phone)
 }
+
+// --- Tài khoản trang quản trị: admin (vào mọi trang, quản lý tài khoản) và staff (nhân viên: hội thoại, thống kê). ---
+export type AccountRole = "admin" | "staff"
+export type Account = { username: string; name: string; pass: string; role: AccountRole; created_at: number }
+
+export function hashPassword(password: string) {
+  const salt = randomBytes(16).toString("hex")
+  return `${salt}:${scryptSync(password, salt, 32).toString("hex")}`
+}
+
+export function checkPassword(password: string, stored: string) {
+  const [salt, hash] = stored.split(":")
+  const want = Buffer.from(hash ?? "", "hex")
+  return !!salt && want.length === 32 && timingSafeEqual(scryptSync(password, salt, 32), want)
+}
+
+export const listAccounts = () => db.prepare("SELECT * FROM accounts ORDER BY role, username").all() as Account[]
+export const getAccount = (username: string) => db.prepare("SELECT * FROM accounts WHERE username = ?").get(username) as Account | undefined
+export const countAdmins = () => (db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE role = 'admin'").get() as { n: number }).n
+
+export function addAccount(username: string, name: string, password: string, role: AccountRole) {
+  db.prepare("INSERT INTO accounts (username, name, pass, role, created_at) VALUES (?, ?, ?, ?, ?)")
+    .run(username, name, hashPassword(password), role, Date.now())
+}
+
+/** Đổi tên, vai trò; có mật khẩu mới thì đặt lại (phiên đăng nhập cũ của tài khoản đó tự hết hiệu lực). */
+export function updateAccount(username: string, name: string, role: AccountRole, password = "") {
+  db.prepare("UPDATE accounts SET name = ?, role = ? WHERE username = ?").run(name, role, username)
+  if (password) db.prepare("UPDATE accounts SET pass = ? WHERE username = ?").run(hashPassword(password), username)
+}
+
+export const deleteAccount = (username: string) => db.prepare("DELETE FROM accounts WHERE username = ?").run(username)
